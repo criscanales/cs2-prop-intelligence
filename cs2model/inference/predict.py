@@ -145,6 +145,14 @@ class Predictor:
                 unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent,
                                   "reason": "player not in bo3 history" if pid is None else "team not matched"})
                 continue
+            skip = None
+            if max(ln.maps) > 3:
+                skip = "map 4/5 lines not modelled"
+            elif ln.start_time is not None and pd.Timestamp(ln.start_time) < pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=5):
+                skip = "match already started (pre-match model only)"
+            if skip:
+                unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent, "reason": skip})
+                continue
             low = [n for n, t in ((ln.team, t1), (ln.opponent, t2))
                    if self.team_counts.get(t, 0) < self.settings["min_team_maps"]]
             if low:
@@ -214,7 +222,7 @@ class Predictor:
                 row = {
                     "id": len(rows), "source": ln.source, "player": ln.player, "player_id": pid, "team": ln.team,
                     "opponent": ln.opponent, "match": spec.key, "start_time": ln.start_time, "stat": ln.stat,
-                    "maps": ln.maps, "maps_label": "Maps " + "+".join(map(str, ln.maps)), "line": ln.line,
+                    "maps": ln.maps, "maps_label": (f"Map {ln.maps[0]}" if len(ln.maps) == 1 else "Maps " + "+".join(map(str, ln.maps))), "line": ln.line,
                     "odds_type": ln.odds_type, "model_mean": float(tot.mean()),
                     "q10": float(np.quantile(tot, 0.1)), "q90": float(np.quantile(tot, 0.9)),
                     "p_over": p_over, "p_under": p_under, "p_over_raw": p_over_raw, "side": side,

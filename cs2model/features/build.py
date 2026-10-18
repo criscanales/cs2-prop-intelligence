@@ -34,6 +34,7 @@ def _roll_sum(g, col, w):
 def _player_features(df: pd.DataFrame) -> pd.DataFrame:
     for c in ("kills", "deaths", "headshots", "first_kills", "first_deaths"):
         df[c] = df[c].where(df[c] >= 0)
+    df["headshots"] = df["headshots"].clip(upper=df["kills"])
     df["open"] = df["first_kills"] + df["first_deaths"]
     g = df.groupby("player_id", sort=False)
     for w in WINDOWS:
