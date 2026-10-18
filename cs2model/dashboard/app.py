@@ -153,6 +153,46 @@ div[data-testid="stDataFrame"] {border:1px solid var(--line);border-radius:var(-
 .phead .av {width:64px;height:64px;}
 .phead .pl {font-family:var(--fd);font-weight:700;font-size:1.9rem;line-height:1;color:var(--tx);}
 .phead .mt {color:var(--tx2);font-size:.8rem;margin-top:4px;}
+/* refinement pass */
+:root {--accent:#e8752a;--accent-soft:rgba(232,117,42,.10);--neu:#c3cad4;}
+section[data-testid="stSidebar"] {width:272px!important;min-width:272px!important;}
+section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding:.75rem 1rem 1rem;}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap:.55rem;}
+.block-container {max-width:none!important;padding-left:2rem!important;padding-right:2rem!important;padding-top:3.75rem!important;}
+span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid var(--line2)!important;color:var(--tx)!important;}
+.stButton>button[kind="primary"] {background:var(--accent);border-color:var(--accent);}
+.hero {padding:16px 22px;} .hero h1 {font-size:2rem;}
+.kpis {grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+.kpi .v.acc {color:var(--tx);}
+.cards {grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+.pc {padding:14px 16px;border-radius:8px;transition:border-color .15s ease,box-shadow .15s ease;}
+.pc:hover {transform:none;border-color:var(--line2);box-shadow:0 6px 18px rgba(0,0,0,.35);}
+.pc:before {display:none;}
+.pc .top {display:flex;align-items:center;gap:12px;}
+.pc .pl {font-size:1.45rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pc .mt {white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.pc .side {margin-left:auto;font-family:var(--fd);font-weight:700;letter-spacing:.1em;font-size:.85rem;padding:2px 8px;border-radius:4px;
+  border:1px solid var(--line2);color:var(--neu);white-space:nowrap;}
+.pc .side.o {color:#86efac;border-color:rgba(34,197,94,.35);} .pc .side.u {color:#fca5a5;border-color:rgba(239,68,68,.35);}
+.pc .bet {margin:14px 0 12px;gap:10px;align-items:center;}
+.pc .bet .ln {font-size:1.9rem;}
+.pc .bet svg {width:20px;height:20px;color:var(--tx2);flex:none;}
+.pc .edge {color:#4ade80;background:var(--pos-soft);border-color:rgba(34,197,94,.35);font-size:1.05rem;}
+.pc .edge.neg {color:var(--tx2);background:var(--panel2);border-color:var(--line2);}
+.prob {margin-bottom:10px;}
+.prob .row {display:flex;justify-content:space-between;font-size:.72rem;color:var(--tx2);margin-bottom:5px;}
+.prob .row b {font-family:var(--fm);color:var(--tx);font-weight:700;}
+.prob .track {position:relative;height:6px;background:#1d2530;border-radius:3px;}
+.prob .fill {position:absolute;left:0;top:0;bottom:0;border-radius:3px;}
+.prob .be {position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--tx);}
+.stats3 {display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;}
+.stats3>div {background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;}
+.stats3 .k {font-family:var(--fd);letter-spacing:.12em;text-transform:uppercase;font-size:.68rem;color:var(--mut);}
+.stats3 .v {font-family:var(--fm);font-weight:700;font-size:.95rem;color:var(--tx);}
+.b-A {background:transparent;color:var(--accent);border:1px solid rgba(232,117,42,.5);}
+.b-B, .b-tier {background:var(--panel2);color:var(--tx2);border:1px solid var(--line2);}
+.b-pp, .b-ud {background:var(--panel2);border:1px solid var(--line2);}
+.badge {transition:background .15s ease;}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -235,21 +275,34 @@ def avatar(pid, name):
     return f'<div class="av ini">{html.escape((name or "?")[:2].upper())}</div>'
 
 
+ICON = {
+    "kills": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7"/>'
+             '<path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg>',
+    "headshots": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 0-6 6c0 2 .8 3.4 2 '
+                 '4.5V17h8v-3.5c1.2-1.1 2-2.5 2-4.5a6 6 0 0 0-6-6z"/><path d="M9 21h6"/><circle cx="12" cy="9" r="2" fill="currentColor"/></svg>',
+}
+
+
 def play_card(r, help_edge="", help_tier=""):
     over = r.side == "over"
-    col = "var(--pos)" if over else "var(--neg)"
     plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
     tier = r.tier if r.tier in ("A", "B") else "tier"
     chg = getattr(r, "chg", "")
     new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
-    be = max(0.0, min(1.0, r.p_side - r.edge))
-    return f"""<div class="pc" style="--c:{col}"><div class="tag">{'OVER' if over else 'UNDER'}</div>
-<div class="who">{avatar(getattr(r, "player_id", None), r.player)}<div><div class="pl">{html.escape(r.player)}</div>
-<div class="mt">{logo(r.team_id)}{html.escape(r.team)} <span style="color:var(--mut)">vs</span> {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div></div></div>
-<div class="bet"><span class="sd">{'O' if over else 'U'}</span><span class="ln">{r.line:g}</span><span class="st">{r.stat}</span>
-<span class="edge" title="{help_edge}">{r.edge:+.1%}</span></div>
-<div class="bars"><span class="lbl">P(side)</span><span class="bar" title="Model probability; white tick = breakeven"><i style="width:{r.p_side:.1%}"></i><u style="left:{be:.1%}"></u></span><span class="val">{r.p_side:.1%}</span>
-<span class="lbl">Mean</span><span class="bar" title="Model mean vs line (white tick)"><i style="width:{min(1, r.model_mean / max(r.line, 1) / 2):.1%};background:var(--steel)"></i><u style="left:50%"></u></span><span class="val">{r.model_mean:.1f}</span></div>
+    be = float(min(1.0, max(0.0, r.breakeven)))
+    fill = "var(--pos)" if r.p_side > be else "var(--steel)"
+    return f"""<div class="pc"><div class="top">{avatar(getattr(r, "player_id", None), r.player)}<div style="min-width:0">
+<div class="pl">{html.escape(r.player)}</div>
+<div class="mt">{logo(r.team_id)}{html.escape(r.team)} <span style="color:var(--mut)">vs</span> {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div></div>
+<span class="side {'o' if over else 'u'}">{'▲ OVER' if over else '▼ UNDER'}</span></div>
+<div class="bet">{ICON.get(r.stat, "")}<span class="ln">{r.line:g}</span><span class="st">{r.stat}</span>
+<span class="edge{'' if r.edge > 0 else ' neg'}" title="{help_edge}">{r.edge:+.1%}</span></div>
+<div class="prob" title="Model probability of this side vs the platform breakeven probability (white tick); both on a 0–100% scale">
+<div class="row"><span>Model P <b>{r.p_side:.1%}</b></span><span>Breakeven <b>{be:.1%}</b></span></div>
+<div class="track"><div class="fill" style="width:{r.p_side:.1%};background:{fill}"></div><div class="be" style="left:{be:.1%}"></div></div></div>
+<div class="stats3"><div title="Mean of the model's predictive distribution"><div class="k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div>
+<div title="Model mean minus the line"><div class="k">vs line</div><div class="v">{r.model_mean - r.line:+.1f}</div></div>
+<div title="Prior maps in this player's history"><div class="k">Sample</div><div class="v">{int(r.n_maps)} maps</div></div></div>
 <div class="foot">{plat}<span class="badge b-{tier}" title="{help_tier}">Conf {r.tier}</span>{new}</div></div>"""
 
 
@@ -410,26 +463,33 @@ with tab_slate:
     cols = ["chg", "logo", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
             "edge", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
+    t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
 
     def color(row):
         r = view.loc[row.name]
         if r.plus_ev:
-            bg = "rgba(34,197,94,0.14)" if r.side == "over" else "rgba(239,68,68,0.14)"
+            bg = "rgba(34,197,94,0.10)"
         else:
             bg = "rgba(0,0,0,0)"
         return [f"background-color: {bg}"] * len(row)
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"}, na_rep="")
-    st.dataframe(sty, width="stretch", height=620, hide_index=True,
-                 column_config={"edge": st.column_config.Column("edge", help=HELP["edge"]),
-                                "ev": st.column_config.Column("EV", help=HELP["ev"]),
-                                "tier": st.column_config.Column("tier", help=HELP["tier"]),
-                                "why": st.column_config.Column("why", help=HELP["why"], width="large"),
-                                "logo": st.column_config.ImageColumn("", width="small"),
-                                "chg": st.column_config.Column("chg", help="NEW = line added, a→b = line moved since last update")})
+    st.dataframe(sty, width="stretch", height=720, hide_index=True,
+                 column_config={
+                     "chg": st.column_config.Column("Chg", width=70, help="NEW = line added, a→b = line moved since last update"),
+                     "logo": st.column_config.ImageColumn("", width=36),
+                     "player": st.column_config.Column("Player", width=110), "team": st.column_config.Column("Team", width=140),
+                     "opponent": st.column_config.Column("Opponent", width=140), "maps": st.column_config.Column("Maps", width=80),
+                     "stat": st.column_config.Column("Stat", width=85), "line": st.column_config.Column("Line", width=60),
+                     "mean": st.column_config.Column("Mean", width=60, help="Mean of the model's predictive distribution"),
+                     "p_over": st.column_config.Column("P(over)", width=75), "p_under": st.column_config.Column("P(under)", width=80),
+                     "side": st.column_config.Column("Side", width=80), "edge": st.column_config.Column("Edge", width=70, help=HELP["edge"]),
+                     "ev": st.column_config.Column("EV", width=70, help=HELP["ev"]), "tier": st.column_config.Column("Conf", width=50, help=HELP["tier"]),
+                     "n_maps": st.column_config.Column("Maps n", width=65, help="Prior maps in the player's history"),
+                     "source": st.column_config.Column("Platform", width=90), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
     st.markdown('<div class="sect">Actions</div>', unsafe_allow_html=True)
-    st.caption("Green = +EV over · Red = +EV under · Gray = no qualifying edge. Edge = model P(side) − platform breakeven.")
+    st.caption("Green rows = +EV (passes all rules) · ▲ over / ▼ under · click a header to sort. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
     d1.download_button("Export +EV picks (CSV)", picks.drop(columns=["maps"]).to_csv(index=False), "cs2_picks.csv")

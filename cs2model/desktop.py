@@ -37,7 +37,7 @@ def serve(port: int):
     from streamlit.web import bootstrap
     flags = {"server.port": port, "server.address": "127.0.0.1", "server.headless": True,
              "global.developmentMode": False, "browser.gatherUsageStats": False,
-             "theme.base": "dark", "theme.primaryColor": "#ff7a1a", "theme.backgroundColor": "#0a0d12",
+             "theme.base": "dark", "theme.primaryColor": "#d9702e", "theme.backgroundColor": "#0a0d12",
              "theme.secondaryBackgroundColor": "#151b23", "theme.textColor": "#e5e7eb"}
     bootstrap.load_config_options(flag_options=flags)
     bootstrap.run(str(BUNDLE / "cs2model" / "dashboard" / "app.py"), False, [], flags)
