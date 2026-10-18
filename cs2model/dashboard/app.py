@@ -233,7 +233,7 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .ss-na {font-size:.78rem;color:var(--mut);padding:6px 0;}
 .lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:2px 0 -20px;position:relative;z-index:1;}
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
-.lg i.dash {width:18px;height:0;border-top:2px dashed #e8752a;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
+.lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
 @media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
 </style>""", unsafe_allow_html=True)
 
@@ -509,7 +509,8 @@ def profile_header(r):
             f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div></div></div>')
 
 
-MAPC = ("#2f4a66", "#5f86ad", "#a9c3dc")
+OVERC = ("#22c55e", "#15803d", "#14532d")
+UNDERC = ("#ef4444", "#b91c1c", "#7f1d1d")
 
 
 def series_chart(r, h, scope):
@@ -541,45 +542,57 @@ def series_chart(r, h, scope):
                   f'<div class="ss-r"><span class="k">Mean</span><span class="v">{r.model_mean:.1f}</span>'
                   f'<span class="f">{r.model_mean - r.line:+.1f} vs line</span></div></div>')
     st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
-                f'<div class="ss-top"><b>Historical</b> hit rates show how often past series beat this line; they are not a forecast. The model card on the right is the predicted probability for this match. Side: <span class="ph-side {"over" if over_side else "under"}">'
+                f'<div class="ss-top"><b>Historical series vs the line:</b> hit rates and averages come from past series only and are not a prediction (the Model card is the forecast for this match). Side: <span class="ph-side {"over" if over_side else "under"}">'
                 f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}</span> · counted on series where all of {r.maps_label} was played</div>'
                 f'<div class="ssr">{cell("L5", piv.tail(5))}{cell("L10", piv.tail(10))}{cell("L15", piv.tail(15))}'
                 f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 3 months")}{model_cell}</div>', unsafe_allow_html=True)
     if piv.empty:
         st.info(f"No recent series with {r.maps_label} played; nothing to chart.")
         return
-    win = st.segmented_control("Window", ["L5", "L10", "L15", "All"], default="L10", key=f"win_{scope}_{r.name}",
+    win = st.segmented_control("Window", ["L5", "L10", "L15", "H2H", "All"], default="L10", key=f"win_{scope}_{r.name}",
                                label_visibility="collapsed") or "L10"
-    v = piv.tail({"L5": 5, "L10": 10, "L15": 15}.get(win, len(piv)))
-    over = (v.total > r.line).values
-    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}<br><span style='color:{c}'>{t}</span>"
-              for d, o, t, c in zip(v.date, v.opp, np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH")),
-                                    np.where(v.total > r.line, "#4ade80", np.where(v.total < r.line, "#f87171", "#a3acb9")))]
-    res = np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH"))
+    if win == "H2H" and h2h.empty:
+        st.info(f"No series vs {r.opponent} with {r.maps_label} played in the last 3 months.")
+        return
+    v = h2h if win == "H2H" else piv.tail({"L5": 5, "L10": 10, "L15": 15}.get(win, len(piv)))
+    hit = (v.total >= r.line).values
+    x = list(range(len(v)))
+    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}" for d, o in zip(v.date, v.opp)]
+    res = np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH (= line)"))
     cd = np.column_stack([[f"{pd.Timestamp(d):%b %d}" for d in v.date], v.opp.astype(str)] + [v[m].astype(int) for m in maps]
                          + [v.total.astype(int), res])
     ht = ("<b>%{customdata[0]} · vs %{customdata[1]}</b><br>" + "".join(f"Map {m}: %{{customdata[{2 + k}]}}<br>" for k, m in enumerate(maps))
-          + f"Series total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line {r.line:g} → %{{customdata[{3 + len(maps)}]}}<extra></extra>")
+          + f"Combined total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line: {r.line:g}<br>Result: <b>%{{customdata[{3 + len(maps)}]}}</b><extra></extra>")
     fig = go.Figure()
     for k, m in enumerate(maps):
-        fig.add_bar(x=labels, y=v[m], name=f"Map {m}", marker=dict(color=MAPC[k], line=dict(color="#0a0d12", width=1.5)),
-                    customdata=cd, hovertemplate=ht)
-    fig.add_scatter(x=labels, y=v.total, mode="text", text=[f"{'▲' if o else '▼'} {int(t)}" for o, t in zip(over, v.total)],
-                    textposition="top center", textfont=dict(color=["#86efac" if o else "#fca5a5" for o in over], size=13, family="JetBrains Mono"),
-                    hoverinfo="skip", showlegend=False)
-    fig.add_hline(y=r.line, line_dash="dash", line_color="#e8752a", line_width=1.5)
-    fig.add_annotation(xref="paper", x=1.0, xanchor="left", y=r.line, text=f" {r.line:g}", showarrow=False,
-                       font=dict(color="#e8752a", size=12, family="JetBrains Mono"))
-    fig.update_layout(barmode="stack", template="plotly_dark", height=340, margin=dict(l=8, r=44, t=4, b=8), showlegend=False,
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", bargap=0.5 if len(v) < 6 else 0.3,
+        fig.add_bar(x=x, y=v[m], name=f"Map {m}", customdata=cd, hovertemplate=ht,
+                    marker=dict(color=[(OVERC if h_ else UNDERC)[k] for h_ in hit], line=dict(color="rgba(10,13,18,.85)", width=1)),
+                    text=[f"<b>{int(val)}</b><br><span style='font-size:9px'>M{m}</span>" for val in v[m]], textposition="inside",
+                    insidetextanchor="middle", textangle=0, constraintext="inside",
+                    textfont=dict(color="#ffffff", size=13, family="JetBrains Mono"))
+    fig.add_scatter(x=x, y=v.total, mode="text", text=[f"<b>{int(t)}</b>" for t in v.total], textposition="top center",
+                    textfont=dict(color=["#4ade80" if h_ else "#f87171" for h_ in hit], size=17, family="JetBrains Mono"),
+                    hoverinfo="skip", showlegend=False, cliponaxis=False)
+    fig.add_hline(y=r.line, line_dash="dash", line_color="rgba(229,231,235,.8)", line_width=2, layer="above")
+    fig.add_annotation(xref="paper", x=1.0, xanchor="left", y=r.line, text=f"<b>{r.line:g}</b>", showarrow=False, bgcolor="#1b222c",
+                       bordercolor="rgba(229,231,235,.6)", borderwidth=1, borderpad=3,
+                       font=dict(color="#eef1f5", size=12, family="JetBrains Mono"))
+    fig.update_layout(barmode="stack", template="plotly_dark", height=410, margin=dict(l=8, r=52, t=22, b=8), showlegend=False,
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", bargap=0.45 if len(v) < 6 else 0.16,
+                      uniformtext=dict(minsize=10, mode="hide"),
                       hoverlabel=dict(bgcolor="#11161d", bordercolor="#2e3846", font=dict(family="Inter", size=12, color="#eef1f5")),
-                      xaxis=dict(type="category", tickfont=dict(size=11, color="#a3acb9")),
-                      yaxis=dict(gridcolor="#1d2530", zeroline=False, title=dict(text=r.stat, font=dict(size=11, color="#6b7684")),
-                                 range=[0, max(v.total.max(), r.line) * 1.12]))
-    sw = "".join(f'<span><i style="background:{MAPC[k]}"></i>Map {m}</span>'
-                 for k, m in enumerate(maps))
-    st.markdown(f'<div class="lg">{sw}<span>▲ green total = over</span><span>▼ red total = under</span><span><i class="dash"></i>Line {r.line:g}</span>'
-                f'<span class="mut">Hover a bar for map values</span></div>', unsafe_allow_html=True)
+                      xaxis=dict(tickvals=x, ticktext=labels, tickfont=dict(size=11, color="#a3acb9"), range=[-0.6, len(v) - 0.4]),
+                      yaxis=dict(gridcolor="#1a212b", zeroline=False, title=dict(text=r.stat, font=dict(size=11, color="#6b7684")),
+                                 range=[0, max(v.total.max(), r.line) * 1.14]))
+    try:
+        fig.update_layout(barcornerradius=6)
+    except ValueError:
+        pass
+    seg = " · ".join(f"M{m} {'bottom' if k == 0 else 'top' if k == len(maps) - 1 else 'middle'}" for k, m in enumerate(maps))
+    st.markdown(f'<div class="lg"><span><i style="background:{OVERC[0]}"></i><i style="background:{OVERC[1]}"></i>Total ≥ line</span>'
+                f'<span><i style="background:{UNDERC[0]}"></i><i style="background:{UNDERC[1]}"></i>Total below line</span>'
+                f'<span>{seg}</span><span><i class="dash"></i>Line {r.line:g}</span>'
+                f'<span class="mut">{len(v)} series shown · hover a bar for details</span></div>', unsafe_allow_html=True)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
 
 
@@ -603,8 +616,11 @@ def player_detail(r, i, scope):
         fmt = {"p_played": "{:.0f}%", "kills": "{:.1f}", "headshots": "{:.1f}", "kpr": "{:.2f}", "maps_n": "{:.0f}",
                "avg_k": "{:.1f}", "avg_hs": "{:.1f}", "kpr_hist": "{:.2f}", "hs_hist": "{:.0f}%"}
         N = st.column_config.NumberColumn
+        hist = ("avg_k", "avg_hs", "kpr_hist", "hs_hist")
+        for c in hist:
+            mp[c] = ["–" if pd.isna(x) else fmt.get(c, "{:.1f}").format(x) for x in mp[c]]
         st.dataframe(mp[["map", "p_played", "kills", "headshots", "kpr", "maps_n", "avg_k", "avg_hs", "kpr_hist", "hs_hist"]]
-                     .style.format(fmt, na_rep="–"),
+                     .style.format({k: f for k, f in fmt.items() if k not in hist}, na_rep="–"),
                      hide_index=True, width="stretch", column_config={
                          "map": "Map", "p_played": st.column_config.ProgressColumn("P(played)", format="%.0f%%", min_value=0, max_value=100,
                                                                                     help="Chance this map is played in the series (map-pick model + P(map 3))"),
