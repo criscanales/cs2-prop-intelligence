@@ -123,6 +123,7 @@ div[data-testid="stDataFrame"] {border:1px solid var(--line);border-radius:var(-
   color:#0a0d12;background:var(--c);clip-path:polygon(10px 0,100% 0,100% 100%,0 100%);}
 .pc .who {display:flex;align-items:center;gap:10px;}
 .av {width:44px;height:44px;border-radius:8px;object-fit:cover;object-position:top;background:var(--panel2);border:1px solid var(--line2);flex:none;}
+.av.pic {background-repeat:no-repeat;background-size:175% auto;background-position:50% 4%;}
 .av.ini {display:flex;align-items:center;justify-content:center;font-family:var(--fd);font-weight:700;font-size:1.2rem;color:var(--tx2);}
 .pc .pl {font-family:var(--fd);font-weight:700;font-size:1.4rem;line-height:1;color:var(--tx);letter-spacing:.02em;}
 .pc .mt {color:var(--tx2);font-size:.74rem;margin-top:4px;}
@@ -420,7 +421,7 @@ BRAND = (f'<div class="brand"><img src="{LOGO_SRC}" alt="Counter-Strike"/></div>
 def avatar(pid, name):
     u = PHOTOS.get(int(pid)) if pid is not None and pid == pid else None
     if u:
-        return f'<img class="av" src="{html.escape(u)}" loading="lazy"/>'
+        return f'<div class="av pic" role="img" aria-label="{html.escape(name or "")}" style="background-image:url(&quot;{html.escape(u)}&quot;)"></div>'
     return f'<div class="av ini">{html.escape((name or "?")[:2].upper())}</div>'
 
 
