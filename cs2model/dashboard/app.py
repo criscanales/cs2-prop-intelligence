@@ -351,6 +351,55 @@ def poll():
     st.caption(f"Pricing… {time.time() - j['t0']:.0f}s")
 
 
+@st.cache_resource
+def results_updater():
+    return {"running": False, "err": None, "added": None, "t": None}
+
+
+def start_results_update(u):
+    u.update(running=True, err=None)
+
+    def work():
+        try:
+            from cs2model.scraper.bo3_history import crawl, save_history
+            old = len(pd.read_csv(HIST_PATH, usecols=["game_id"])) if HIST_PATH.exists() else 0
+            df = crawl(settings["history_days"], tiers=tuple(settings["tiers"]), write=False)
+            if len(df) < 0.9 * old:
+                raise RuntimeError(f"only {len(df):,} rows pulled vs {old:,} on disk; kept the current history")
+            save_history(df)
+            u["added"] = len(df) - old
+            pr = Predictor()
+            store.grade(pr.hist, pr.resolve_player)
+        except Exception as e:  # noqa: BLE001  surfaced in the sidebar
+            u["err"] = str(e)
+        finally:
+            u.update(running=False, t=time.time())
+    threading.Thread(target=work, daemon=True).start()
+
+
+@st.fragment(run_every=60)
+def results_watch(on, rmin):
+    u = results_updater()
+    mt = HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0
+    seen = st.session_state.setdefault("hist_seen", mt)
+    if mt != seen and not st.session_state.get("job") and not u["running"]:
+        st.session_state.hist_seen = mt
+        st.toast("New match results loaded. Repricing...")
+        st.session_state.force_refresh = True
+        st.rerun(scope="app")
+    if on and not u["running"] and time.time() - max(mt, u["t"] or 0) >= rmin * 60:
+        start_results_update(u)
+    if u["running"]:
+        st.caption("Pulling new results from bo3.gg…")
+    else:
+        nxt = max(0, rmin * 60 - (time.time() - max(mt, u["t"] or 0))) / 60
+        st.caption(f"Results updated {pd.Timestamp(mt, unit='s', tz='UTC'):%H:%M} UTC"
+                   + (f" · {u['added']:+,} rows" if u["added"] is not None else "")
+                   + (f" · next pull in {nxt:.0f} min" if on else " · auto-pull off"))
+    if u["err"]:
+        st.caption(f"Results pull failed: {u['err']}")
+
+
 LOGOS = load_logos()
 
 
@@ -455,6 +504,10 @@ with st.sidebar:
             st.rerun(scope="app")
         st.caption(f"Checked {pd.Timestamp.now(tz='UTC'):%H:%M:%S} UTC · next check in {every // 60} min")
     watch()
+    rmin = max(15, int(settings.get("results_refresh_min", 60)))
+    auto_res = st.toggle("Auto-pull new results", value=True,
+                         help=f"Every {rmin} min: pull newly finished bo3.gg matches into player history, grade logged picks and re-price.")
+    results_watch(auto_res, rmin)
     if res is not None:
         st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} matches with odds")
     for e in (res or {}).get("errors", []):

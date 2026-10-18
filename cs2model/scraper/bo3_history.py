@@ -7,6 +7,7 @@ Endpoints (all public, discovered from the bo3.gg web app):
   /api/v1/tournaments?filter[tournaments.id][eq]=ID  event type (lan/online), tier
 """
 import argparse
+import os
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -26,7 +27,7 @@ PAST = None  # finished matches/maps never change -> cache forever
 def finished_matches(day: date):
     d = fetch_json(f"{API}/v2/matches/finished",
                    params={"date": day.isoformat(), "utc_offset": 0, "filter[discipline_id][eq]": 1},
-                   ttl=PAST if day < date.today() - timedelta(days=1) else 3600)
+                   ttl=PAST if day < date.today() - timedelta(days=1) else 900)
     inc = d.get("included") or {}
     out = []
     for tier_block in (d.get("data") or {}).get("tiers", {}).values():
@@ -108,7 +109,7 @@ def rows_for_match(m, teams_inc, tour):
     return rows
 
 
-def crawl(days=92, end: date | None = None, tiers=("s", "a", "b")):
+def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True):
     end = end or datetime.now(timezone.utc).date()
     rows, tours = [], {}
     for i in range(days, -1, -1):
@@ -135,9 +136,17 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b")):
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"], utc=True)
         df = df.drop_duplicates(["game_id", "player_id"]).sort_values(["date", "game_id"])
-    DATA.mkdir(exist_ok=True)
-    df.to_csv(HIST_PATH, index=False)
+    if write:
+        save_history(df)
     return df
+
+
+def save_history(df):
+    """Write via a temp file + rename so readers never see a half-written CSV."""
+    DATA.mkdir(exist_ok=True)
+    tmp = HIST_PATH.with_suffix(".tmp")
+    df.to_csv(tmp, index=False)
+    os.replace(tmp, HIST_PATH)
 
 
 if __name__ == "__main__":

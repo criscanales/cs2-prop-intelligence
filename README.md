@@ -94,6 +94,8 @@ Other commands:
 To schedule runs, add a cron entry such as `*/30 * * * * cd /path/cs2-props && .venv/bin/python -m cs2model.cli refresh`.
 Or leave `refresh --every 30` running in a terminal.
 
+While the dashboard is open it also does this itself: with **Auto-pull new results** on (sidebar), it pulls newly finished bo3.gg matches every `results_refresh_min` minutes (default 60), grades logged picks and re-prices the slate in the background. Retraining still needs the CLI.
+
 ## Data sources
 
 All requests use plain `requests` with a descriptive User-Agent. The client throttles each host (≥0.6 s between

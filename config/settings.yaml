@@ -15,6 +15,7 @@ kelly_fraction: 0.25
 bankroll: 1000
 max_stake_pct: 0.03
 auto_refresh_sec: 120         # dashboard checks for new/moved/pulled lines this often
+results_refresh_min: 60       # dashboard pulls newly finished bo3.gg matches into history this often (min 15)
 unverified_max_stake_pct: 0.005   # stake cap while payouts.yaml has verified: false       # per slip, of bankroll
 daily_exposure_pct: 0.15  # all slips per day, of bankroll
 max_legs_per_match: 2

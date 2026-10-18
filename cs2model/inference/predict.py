@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import pickle
+import threading
 import time
 import zlib
 from concurrent.futures import ProcessPoolExecutor
@@ -279,17 +280,18 @@ class Predictor:
         if not jobs:
             return []
         w = self._n_workers()
-        if w > 1 and len(jobs) >= int(self.settings.get("parallel_min_jobs", 3)):
+        with _POOL_LOCK:  # concurrent pricing threads (several dashboard sessions) share one pool and _WORKER
+            if w > 1 and len(jobs) >= int(self.settings.get("parallel_min_jobs", 3)):
+                try:
+                    return list(_get_pool(w, self).map(fn, jobs))
+                except Exception as e:  # noqa: BLE001  any pool failure falls back to the serial path
+                    log.warning("parallel pricing failed (%s); running serially", e)
+                    _shutdown_pool()
+            prev, _WORKER = _WORKER, self
             try:
-                return list(_get_pool(w, self).map(fn, jobs))
-            except Exception as e:  # noqa: BLE001  any pool failure falls back to the serial path
-                log.warning("parallel pricing failed (%s); running serially", e)
-                _shutdown_pool()
-        prev, _WORKER = _WORKER, self
-        try:
-            return [fn(j) for j in jobs]
-        finally:
-            _WORKER = prev
+                return [fn(j) for j in jobs]
+            finally:
+                _WORKER = prev
 
     # ---------- main entry
     def build_slate(self, lines, books, n_sims=None, seed=7, con=None, now=None):
@@ -422,6 +424,7 @@ D_PRIOR = 0.68
 # ---------- worker processes: each loads history + models once and runs LightGBM single-threaded
 _WORKER = None
 _POOL, _POOL_SIG = None, None
+_POOL_LOCK = threading.RLock()
 
 
 def _init_worker(settings, payouts):
