@@ -1,0 +1,254 @@
+"""streamlit run cs2model/dashboard/app.py"""
+import json
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from cs2model.parlay import engine as E
+from cs2model.pipeline import build_slips, run_slate
+from cs2model.tracking import store
+from cs2model.training.train import MODEL_DIR
+
+st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="🎯")
+st.markdown("""<style>
+.block-container {padding-top: 1.2rem; max-width: 1600px;}
+div[data-testid="stMetric"] {background:#141a22;border:1px solid #1f2937;border-radius:10px;padding:10px 14px;}
+div[data-testid="stMetricValue"] {font-size:1.4rem;}
+</style>""", unsafe_allow_html=True)
+
+settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
+
+if not (MODEL_DIR / "kills_lgbm.txt").exists():
+    st.error("No trained model. Run `python -m cs2model.cli crawl` then `python -m cs2model.cli train`.")
+    st.stop()
+
+# ---------------- sidebar
+with st.sidebar:
+    st.title("CS2 Props +EV")
+    if st.button("Refresh lines & odds", type="primary", use_container_width=True) or "res" not in st.session_state:
+        with st.spinner("Pulling lines/odds and simulating matches..."):
+            st.session_state.res = run_slate(st.session_state.get("res", {}).get("predictor"))
+    res = st.session_state.res
+    st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} priced matches")
+    for e in res["errors"]:
+        st.warning(f"Source unavailable: {e}")
+    unverified = [p for p, c in payouts.items() if not c.get("verified")]
+    if unverified:
+        st.warning(f"Payouts not verified for {', '.join(unverified)}. Edit config/payouts.yaml to match your app.")
+    st.subheader("Filters")
+    platforms = st.multiselect("Platform", ["prizepicks", "underdog"], ["prizepicks", "underdog"])
+    stats = st.multiselect("Stat", ["kills", "headshots"], ["kills", "headshots"])
+    min_edge = st.slider("Min edge", 0.0, 0.15, float(settings["min_edge"]), 0.005, format="%.3f")
+    only_ev = st.toggle("Only +EV (passes all rules)", value=False)
+    tiers = st.multiselect("Tier", ["A", "B", "C", "-"], ["A", "B", "C", "-"])
+    q = st.text_input("Search player / team")
+    st.subheader("Bankroll")
+    settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings["bankroll"]), 50.0)
+    settings["kelly_fraction"] = st.slider("Kelly fraction", 0.05, 1.0, float(settings["kelly_fraction"]), 0.05)
+    settings["daily_exposure_pct"] = st.slider("Daily max exposure", 0.01, 0.5, float(settings["daily_exposure_pct"]), 0.01)
+
+slate, details, pred = res["slate"], res["details"], res["predictor"]
+if slate.empty:
+    st.info("No CS2 kills/headshots lines matched to bo3 history right now.")
+    st.stop()
+
+view = slate[slate.source.isin(platforms) & slate.stat.isin(stats) & slate.tier.isin(tiers)]
+view = view[(view.edge >= min_edge) | ~only_ev]
+if only_ev:
+    view = view[view.plus_ev]
+if q:
+    ql = q.lower()
+    view = view[view.player.str.lower().str.contains(ql) | view.team.str.lower().str.contains(ql) |
+                view.opponent.str.lower().str.contains(ql)]
+
+tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Player", "Parlays", "Tracking", "Model"])
+
+# ---------------- slate
+with tab_slate:
+    ev = slate[slate.plus_ev]
+    c = st.columns(5)
+    c[0].metric("Lines priced", len(slate))
+    c[1].metric("+EV picks", len(ev))
+    c[2].metric("Tier A", int((ev.tier == "A").sum()))
+    c[3].metric("Best edge", f"{ev.edge.max():.1%}" if len(ev) else "–")
+    c[4].metric("Unmatched lines", len(res["unmatched"]))
+    cols = ["player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
+            "edge", "ev", "tier", "n_maps", "source", "flags", "reason"]
+    t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
+
+    def color(row):
+        r = view.loc[row.name]
+        if r.plus_ev:
+            bg = "rgba(34,197,94,0.18)" if r.side == "over" else "rgba(239,68,68,0.18)"
+        else:
+            bg = "rgba(148,163,184,0.06)"
+        return [f"background-color: {bg}"] * len(row)
+
+    sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
+                                              "edge": "{:+.1%}", "ev": "{:+.1%}"})
+    st.dataframe(sty, use_container_width=True, height=620, hide_index=True)
+    st.caption("Green = +EV over · Red = +EV under · Gray = no qualifying edge. Edge = model P(side) − platform breakeven.")
+    d1, d2 = st.columns(2)
+    picks = slate[slate.plus_ev]
+    d1.download_button("Export +EV picks (CSV)", picks.drop(columns=["maps"]).to_csv(index=False), "cs2_picks.csv")
+    d2.download_button("Export +EV picks (JSON)", picks.drop(columns=["maps"]).to_json(orient="records", date_format="iso"),
+                       "cs2_picks.json")
+    if st.button("Log +EV picks to tracker"):
+        store.log_picks(picks)
+        st.success(f"Logged {len(picks)} picks")
+    if len(res["unmatched"]):
+        with st.expander("Unmatched lines"):
+            st.dataframe(res["unmatched"], hide_index=True, use_container_width=True)
+
+# ---------------- player
+with tab_player:
+    opts = view.apply(lambda r: f"{r.player} · {r.stat} {r.maps_label} {r.line} ({r.source})", axis=1)
+    if len(opts):
+        pick = st.selectbox("Line", opts.index, format_func=lambda i: opts[i])
+        r = slate.loc[pick]
+        tot = details[pick]["totals"]
+        a, b = st.columns([3, 2])
+        with a:
+            vals, cnt = np.unique(tot, return_counts=True)
+            fig = go.Figure(go.Bar(x=vals, y=cnt / cnt.sum(), marker_color=["#22c55e" if v > r.line else "#ef4444" for v in vals]))
+            fig.add_vline(x=r.line, line_dash="dash", line_color="#e5e7eb", annotation_text=f"line {r.line}")
+            fig.add_vline(x=r.model_mean, line_color="#60a5fa", annotation_text=f"mean {r.model_mean:.1f}")
+            fig.update_layout(template="plotly_dark", height=360, margin=dict(l=10, r=10, t=30, b=10),
+                              title=f"{r.player} {r.stat} {r.maps_label}: predictive distribution",
+                              xaxis_title=r.stat, yaxis_title="probability", bargap=0.05)
+            st.plotly_chart(fig, use_container_width=True)
+        with b:
+            m = st.columns(2)
+            m[0].metric("P(over)", f"{r.p_over:.1%}")
+            m[1].metric("P(under)", f"{r.p_under:.1%}")
+            m = st.columns(2)
+            m[0].metric("Edge", f"{r.edge:+.1%}", r.side)
+            m[1].metric("Tier", r.tier)
+            st.caption(r.reason)
+            if r.flags:
+                st.warning(r.flags)
+            st.caption(f"80% interval {r.q10:.0f}–{r.q90:.0f} · map win {r.p_map_win:.0%} · OT/map {r.p_ot:.0%} · "
+                       f"map 3 {r.p_map3:.0%} · odds: {r.odds_source}")
+        h = pred.hist[pred.hist.player_id == r.player_id].sort_values("date", ascending=False)
+        h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
+        st.subheader("Last 20 maps")
+        st.dataframe(h.head(20)[["date", "opponent", "map_name", "map_number", "rounds", "won", "kills", "headshots", "adr",
+                                 "kast", "rating", "tier"]], hide_index=True, use_container_width=True)
+        s1, s2 = st.columns(2)
+        agg = dict(maps=("kills", "size"), kills=("kills", "mean"), hs=("headshots", "mean"), kpr=("kpr", "mean"),
+                   hs_pct=("hs_pct", "mean"))
+        s1.subheader("By map")
+        s1.dataframe(h.groupby("map_name").agg(**agg).round(2).sort_values("maps", ascending=False), use_container_width=True)
+        s2.subheader("By opponent")
+        s2.dataframe(h.groupby("opponent").agg(**agg).round(2).sort_values("maps", ascending=False).head(15),
+                     use_container_width=True)
+
+# ---------------- parlays
+with tab_parlay:
+    plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True)
+    avail = E.plays(plat, payouts)
+    mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], horizontal=True)
+    if mode.startswith("Auto"):
+        chosen = st.multiselect("Play types", list(avail), list(avail))
+        with st.spinner("Searching slips on correlated simulations..."):
+            slips = build_slips(slate, details, plat, settings, payouts, plays={k: avail[k] for k in chosen})
+        if slips.empty:
+            st.info("No +EV slips from the current +EV legs on this platform.")
+        else:
+            top = slips.iloc[0]
+            st.success(f"Best overall: {top.play} · EV {top.ev:+.1%} · P(all) {top.p_all:.1%} · stake ${top.stake:.2f}\n\n{top.legs}")
+            show = slips[["play", "rank", "legs", "p_all", "ev", "ev_indep", "corr_ratio", "heavy_corr", "sanity_ok",
+                          "matches", "kelly_full", "stake", "recommended"]]
+            st.dataframe(show.style.format({"p_all": "{:.1%}", "ev": "{:+.1%}", "ev_indep": "{:+.1%}", "corr_ratio": "{:.2f}",
+                                            "kelly_full": "{:.1%}", "stake": "${:.2f}"}),
+                         hide_index=True, use_container_width=True, height=420)
+            st.caption("ev_indep = EV if legs were independent; corr_ratio = P(all hit) / product of leg probabilities. "
+                       "6-leg slips must pass sanity_ok (still +EV under independence with every leg 2pp worse).")
+            st.subheader("EV by legs and Power vs Flex (best slip each)")
+            st.bar_chart(slips.groupby("play").ev.max().sort_values())
+            e1, e2, e3 = st.columns(3)
+            e1.download_button("Slips CSV", slips.to_csv(index=False), "cs2_slips.csv")
+            e2.download_button("Slips JSON", json.dumps(slips.to_dict("records"), default=str), "cs2_slips.json")
+            if e3.button("Log recommended slips + picks"):
+                p = slate[slate.plus_ev]
+                store.log_picks(p)
+                con = store.connect()
+                idmap = {}
+                for row in con.execute("SELECT id, source, player, stat, maps, side, line FROM picks"):
+                    idmap[tuple(row[1:])] = row[0]
+                for s in slips[slips.recommended].itertuples():
+                    legs = [idmap.get((slate.loc[i, "source"], slate.loc[i, "player"], slate.loc[i, "stat"],
+                                       "+".join(map(str, slate.loc[i, "maps"])), slate.loc[i, "side"], slate.loc[i, "line"]))
+                            for i in s.leg_ids]
+                    store.log_slip(plat, s.play, legs, s.p_all, s.ev, s.stake, s.hit_dist, con)
+                st.success("Logged")
+    else:
+        cand = slate[slate.source == plat].sort_values("edge", ascending=False)
+        labels = cand.apply(lambda r: f"{r.player} {r.side} {r.line} {r.stat} {r.maps_label} (edge {r.edge:+.1%})", axis=1)
+        sel = st.multiselect("Legs (side = model's side)", cand.id.tolist(), format_func=lambda i: labels[i], max_selections=6)
+        if len(sel) >= 2:
+            H = np.column_stack([details[i]["hit"] for i in sel])
+            rows = []
+            for name, play in avail.items():
+                if play["legs"] != len(sel):
+                    continue
+                r = E.evaluate(H, range(len(sel)), play)
+                f = E.kelly_fraction(r["hit_dist"], play)
+                rows.append({"play": name, "P(all)": r["p_all"], "max payout": E.payout_vector(play).max(), "EV": r["ev"],
+                             "EV if independent": r["ev_indep"], "corr ratio": r["corr_ratio"],
+                             "stake": min(settings["kelly_fraction"] * f, settings["max_stake_pct"]) * settings["bankroll"],
+                             "hit dist": np.round(r["hit_dist"], 3).tolist()})
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            else:
+                st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
+
+# ---------------- tracking
+with tab_track:
+    summ, p, s = store.performance()
+    if not summ.get("picks"):
+        st.info("No graded picks yet. Log picks, then run `python -m cs2model.cli grade` after matches finish.")
+    else:
+        c = st.columns(5)
+        c[0].metric("Graded picks", summ["picks"])
+        c[1].metric("Hit rate", f"{summ['hit_rate']:.1%}")
+        c[2].metric("Flat ROI", f"{summ['flat_roi']:+.1%}")
+        c[3].metric("Avg CLV (lines)", f"{summ['avg_clv']:+.2f}" if summ["avg_clv"] == summ["avg_clv"] else "–")
+        c[4].metric("Slip profit", f"${summ['slip_profit']:.2f}")
+        p["bucket"] = (p.p_model * 10).astype(int) / 10
+        cal = p.groupby("bucket").agg(pred=("p_model", "mean"), obs=("win", "mean"), n=("win", "size")).reset_index()
+        fig = go.Figure([go.Scatter(x=cal.pred, y=cal.obs, mode="markers+lines", name="picks"),
+                         go.Scatter(x=[0.4, 0.9], y=[0.4, 0.9], mode="lines", line_dash="dash", name="perfect")])
+        fig.update_layout(template="plotly_dark", height=320, title="Live calibration", xaxis_title="model P", yaxis_title="hit rate")
+        st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(p.sort_values("start_time", ascending=False), hide_index=True, use_container_width=True)
+        if len(s):
+            st.dataframe(s, hide_index=True, use_container_width=True)
+
+# ---------------- model
+with tab_model:
+    bt = json.loads((MODEL_DIR / "backtest.json").read_text())
+    st.caption(f"Time split: {bt['split_dates']}. Lines in the backtest are synthetic (naive mean rounded to .5) because "
+               f"historical prop lines are not archived publicly, so ROI here is indicative only.")
+    rows = []
+    for model, r in bt["models"].items():
+        for k, v in r.items():
+            rows.append({"model": model, "target": k, "MAE": v["mae"], "pinball q50": v["pinball_0.5"],
+                         "pinball q10": v["pinball_0.1"], "pinball q90": v["pinball_0.9"], "Brier": v["brier"],
+                         "LogLoss": v["logloss"], "picks": v["betting"]["n_picks"], "hit": v["betting"]["hit_rate"],
+                         "ROI": v["betting"]["roi"]})
+    st.dataframe(pd.DataFrame(rows).round(4), hide_index=True, use_container_width=True)
+    a, b = st.columns(2)
+    for col, stat in ((a, "kills"), (b, "headshots")):
+        cal = pd.DataFrame(bt[f"calibration_{stat}"])
+        fig = go.Figure([go.Scatter(x=cal.pred, y=cal.obs, mode="markers+lines", text=cal.n, name="test"),
+                         go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line_dash="dash", name="perfect")])
+        fig.update_layout(template="plotly_dark", height=320, title=f"Calibration ({stat}, test maps)")
+        col.plotly_chart(fig, use_container_width=True)
+    st.subheader("Edge buckets (LightGBM, test)")
+    st.dataframe(pd.DataFrame([dict(target=k, **bk) for k, v in bt["models"]["lgbm"].items() for bk in v["betting"]["buckets"]]),
+                 hide_index=True, use_container_width=True)
+    st.subheader("Top features (kills, gain share)")
+    st.bar_chart(pd.Series(bt["feature_importance_kills"]))

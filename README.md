@@ -1,0 +1,110 @@
+# CS2 player kills & headshots model (+EV picks and pick'em slips)
+
+This project predicts a full distribution of CS2 player **kills** and **headshots** (per map, Maps 1+2 and
+Maps 1-3). It compares those predictions with live PrizePicks and Underdog lines and flags picks that are
++EV after the platform's payout. It also builds correlation-aware Power/Flex slips and logs picks and slips
+so you can track ROI, CLV and calibration.
+
+## Quick start (Mac / Linux)
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt          # Mac: if LightGBM fails to import, run `brew install libomp`
+python -m cs2model.cli crawl             # ~3 months of bo3.gg map stats -> data/player_maps.csv (first run ~1.5 h, then cached)
+python -m cs2model.cli train             # trains models, prints the backtest table
+streamlit run cs2model/dashboard/app.py  # dashboard at http://localhost:8501
+```
+
+**Before you trust any EV number,** open `config/payouts.yaml` and enter the payouts your app shows today.
+Then set `verified: true`. The dashboard shows a warning until you do.
+
+Other commands:
+
+| command | what it does |
+|---|---|
+| `python -m cs2model.cli slate [--log-picks]` | prices current lines, prints +EV picks and the best slip per play type, exports CSV/JSON to `data/out/` |
+| `python -m cs2model.cli grade` | grades logged picks and slips against bo3.gg results and prints ROI/CLV |
+| `python -m cs2model.cli refresh --every 30 [--retrain]` | crawls new days, grades, optionally retrains, then re-prices; loops every N minutes |
+| `pytest -q` | unit tests |
+
+To schedule runs, add a cron entry such as `*/30 * * * * cd /path/cs2-props && .venv/bin/python -m cs2model.cli refresh`.
+Or leave `refresh --every 30` running in a terminal.
+
+## Data sources
+
+All requests use plain `requests` with a descriptive User-Agent. The client throttles each host (≥0.6 s between
+calls plus jitter) and retries 429/5xx with exponential backoff. Responses are cached under `data/cache/`;
+finished matches are cached forever, so re-crawls only fetch new days. A 401/403 raises `AccessDenied`, and that
+source is skipped and reported in the CLI and dashboard instead of being worked around.
+
+| source | used for | how |
+|---|---|---|
+| **bo3.gg** public JSON API (primary stats) | per-player per-map kills, HS, ADR, KAST, rating, opening duels; map, score, rounds; tier, LAN/online, BO format | `/api/v2/matches/finished?date=`, `/api/v1/games?filter[games.match_id][eq]=`, `/api/v1/games/{id}/players_stats`, `/api/v1/tournaments?filter[tournaments.id][eq]=` |
+| **PrizePicks** | CS2 kills/HS lines | `partner-api.prizepicks.com/projections?league_id=265` (demon/goblin lines excluded by default) |
+| **Underdog** | CS2 kills/HS lines + per-line prices | `api.underdogfantasy.com/v1/over_under_lines` |
+| **Pinnacle** guest API | series/map moneylines, map round-total ladders, map overtime yes/no | `guest.api.arcadia.pinnacle.com/0.1/sports/12/...`, the same public endpoints pinnacle.com calls when logged out |
+| **Thunderpick** (via bo3.gg) | match moneylines | Pre-match Thunderpick odds that bo3.gg publishes in its upcoming-matches feed (`bet_updates`) |
+
+**Not used:**
+- **HLTV.** Plain HTTP gets a Cloudflare 403 challenge. Getting past it would mean bypassing access controls, so HLTV is skipped.
+- **thunderpick.io directly.** It also answers 403 to non-browser clients. Its odds come through bo3.gg instead.
+
+Window: `history_days: 92` in `config/settings.yaml` (last ~3 months), tiers S/A/B/C.
+
+## Model
+
+1. **Features** (`cs2model/features/build.py`). Every feature for a map uses only maps that finished before it. Unit tests check this.
+   - **Player form:** last 5/10/20 maps and recency-weighted EWM for KPR, HS%, rating, ADR, KAST, opening-duel rate and opening-duel win share (an entry/role proxy). Also shrunk KPR/HS%, kill SD, map-specific KPR, rest days, maps in the last 7 days and rounds played.
+   - **Team and opponent:** pre-map Elo (team, opponent, difference, win probability), team pace (rounds per map), overtime rate, opponent kills allowed per round (overall and on this map), map win rates and newcomers in the lineup.
+   - **Context:** BO1/3/5, LAN or online, tournament tier, map number, map.
+   - **Roster:** `tenure` (maps with the current team). Fewer than 3 maps means a stand-in or new signing, and the pick is excluded. `role_shift` is the change in last-5 vs last-20 opening-duel share; large shifts are flagged.
+2. **Main model.** Two LightGBM Poisson models:
+   - kills, with a log(rounds) offset, which gives **kills per round**
+   - headshots, with a log(kills) offset, which gives **HS per kill**
+3. **Predictive distribution** (`inference/distribution.py`, `inference/simulate.py`), built per map:
+   - Rounds come from the empirical distribution for that matchup closeness. They are tilted to Pinnacle's round-total ladder and overtime price when available.
+   - The map winner is drawn from the market (or Elo). Winners get a kill-rate multiplier fit on validation data, normalised so the expected value is unchanged.
+   - Kills follow a NegBin with dispersion fit on validation data. HS | kills follow a Beta-Binomial.
+   - Map picks are drawn from both teams' recent map pools. Map 3 is played only when maps 1–2 split.
+   - A 50k-draw joint simulation per match produces P(over/under) for any line, plus quantiles.
+4. **Calibration.** Isotonic regression on the validation split, separately for kills/HS and single-map/multi-map.
+5. **Baselines.** A negative-binomial GLM (statsmodels, same offset) and a naive last-10 average with a Poisson distribution.
+6. **Validation.** Time-ordered 70/15/15 split by map date, no shuffling. Metrics: MAE, pinball loss (q10/50/90), Brier, log loss, calibration table, hit rate, flat-stake ROI, and edge buckets.
+   - Historical prop lines aren't archived publicly, so backtest "lines" are the naive mean rounded to .5. Backtest ROI is therefore only indicative. Real performance comes from the tracker.
+
+## +EV rules (`config/settings.yaml`)
+
+- **Edge** = model P(side) − breakeven. The breakeven comes from the platform's `single_pick_reference` play in `payouts.yaml`, e.g. 2-Power = 3^(-1/2) ≈ 57.7%, or 1/decimal for Underdog lines that carry their own price.
+- **Thresholds:** min edge 3%, min 15 prior maps.
+- **Excluded or flagged:**
+  - stand-ins
+  - recent role changes
+  - model mean more than 35% away from the line (likely news)
+  - lines that moved ≥1.5 since first seen (tracked in `data/tracking.db`)
+- **Confidence tiers:**
+  - **A:** ≥30 maps, ≥10 maps with the team, edge ≥6%, priced with market odds
+  - **B:** ≥20 maps and edge ≥4%
+  - **C:** other picks that pass
+- Each pick gets a one-line reason (form, opponent, map win %, overtime %, map 3 %).
+
+## Slips (`cs2model/parlay/engine.py`)
+
+- **Play types** come from `config/payouts.yaml`: 2-Power, 3-Power/Flex, 5-Power/Flex, 6-Power/Flex, plus an optional 2-Flex. 4-leg plays are excluded.
+- **Hit matrix.** All legs are drawn from the same match simulations. Same-match legs share map picks, pace, overtime and winner; the same player's kills and HS share draws. The draws are then thinned to the calibrated marginal probabilities.
+- **EV.** Power uses P(all hit). Flex uses the exact distribution of hit counts. EV under independence and `corr_ratio` (P(all) ÷ product of leg probabilities) are reported. Heavily correlated slips are penalised and flagged. Max 2 legs per match by default, so slips favour different matches.
+- **6-leg sanity check.** A +EV 6-leg slip must stay +EV when legs are treated as independent and every leg is made 2pp worse.
+- **Stake.** Full Kelly is solved over the hit distribution, then multiplied by `kelly_fraction` (0.25). Each slip is capped at `max_stake_pct`, and the best slip per play type is scaled to `daily_exposure_pct`.
+
+## Tracking
+
+Each pick and slip you log is stored in `data/tracking.db`, along with line snapshots. `grade` fills in actual
+results, closing lines (CLV) and slip payouts. The dashboard's Tracking tab shows hit rate, flat ROI, CLV, slip
+profit and live calibration.
+
+## Limitations
+
+- Three months of data is enough for form but thin for map-specific splits, which are shrunk toward overall form.
+- Veto prediction is approximate: maps are drawn by both teams' recent play frequency, not modelled from pick/ban order.
+- bo3.gg has no AWPer/role tags in the per-map stats feed. Role is approximated by opening-duel involvement.
+- PrizePicks/Underdog promos, boosted lines and state-specific payouts are not modelled. Keep `payouts.yaml` current.
+- Not betting advice. Check local laws and platform terms.

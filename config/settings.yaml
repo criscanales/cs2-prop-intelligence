@@ -1,0 +1,15 @@
+history_days: 92          # training window (last ~3 months)
+tiers: [s, a, b, c]       # bo3.gg tournament tiers to crawl
+min_edge: 0.03            # model P(side) - breakeven
+min_maps: 15              # minimum prior maps for a player
+max_line_gap: 0.35        # |model mean / line - 1| above this => flagged as suspicious, excluded
+line_move_flag: 1.5       # line moved this many kills/HS since first seen => flagged
+standin_tenure: 3         # fewer prior maps with current team => stand-in, excluded
+role_shift_flag: 0.18     # |opening-duel win share last5 - last20| above this => role change flag
+n_sims: 50000             # Monte Carlo draws for slips
+kelly_fraction: 0.25
+bankroll: 1000
+max_stake_pct: 0.03       # per slip, of bankroll
+daily_exposure_pct: 0.15  # all slips per day, of bankroll
+max_legs_per_match: 2
+top_n_slips: 10

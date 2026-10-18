@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+data/
+models/
+.pytest_cache/
+.ruff_cache/

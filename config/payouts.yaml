@@ -1,0 +1,40 @@
+# Pick'em payout tables. EDIT THESE to match exactly what your app shows today.
+# Payouts change by state, promo and over time; values below are placeholders that must be
+# verified before use. The dashboard shows a warning while `verified: false`.
+#
+# power:  all legs must hit -> stake * multiplier
+# flex:   hits -> multiplier (missing tiers pay 0)
+# single_pick_reference: play type used to derive the per-leg breakeven for the slate table.
+
+prizepicks:
+  verified: false
+  last_verified: null
+  source: "PrizePicks app > lineup screen (payout shown before submitting)"
+  single_pick_reference: power_2
+  exclude_odds_types: [demon, goblin]   # these carry different, line-specific payouts
+  plays:
+    power_2: {legs: 2, type: power, payout: 3.0}
+    power_3: {legs: 3, type: power, payout: 6.0}
+    flex_3:  {legs: 3, type: flex, payouts: {3: 3.0, 2: 1.0}}
+    power_5: {legs: 5, type: power, payout: 20.0}
+    flex_5:  {legs: 5, type: flex, payouts: {5: 10.0, 4: 2.0, 3: 0.4}}
+    power_6: {legs: 6, type: power, payout: 37.5}
+    flex_6:  {legs: 6, type: flex, payouts: {6: 25.0, 5: 2.0, 4: 0.4}}
+    flex_2:  {legs: 2, type: flex, payouts: {2: 1.5, 1: 0.5}, enabled: false}
+
+underdog:
+  verified: false
+  last_verified: null
+  source: "Underdog app > Pick'em entry screen"
+  single_pick_reference: power_2
+  # Underdog also prices some lines individually (decimal shown on the line); when present the
+  # single-pick breakeven uses 1/decimal instead of the reference play.
+  plays:
+    power_2: {legs: 2, type: power, payout: 3.0}
+    power_3: {legs: 3, type: power, payout: 6.0}
+    flex_3:  {legs: 3, type: flex, payouts: {3: 3.0, 2: 1.0}}
+    power_5: {legs: 5, type: power, payout: 20.0}
+    flex_5:  {legs: 5, type: flex, payouts: {5: 10.0, 4: 2.0, 3: 0.4}}
+    power_6: {legs: 6, type: power, payout: 37.5}
+    flex_6:  {legs: 6, type: flex, payouts: {6: 25.0, 5: 2.0, 4: 0.4}}
+    flex_2:  {legs: 2, type: flex, payouts: {2: 1.5, 1: 0.5}, enabled: false}
