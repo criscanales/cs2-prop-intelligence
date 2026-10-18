@@ -175,3 +175,31 @@ def team_logos(write=True):
     if write:
         (DATA / "team_logos.json").write_text(json.dumps(out))
     return out
+
+
+def player_photos(write=True):
+    """{player_id: image_url} gathered from bo3 responses already in the disk cache (no extra requests)."""
+    import glob
+    out = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            url = o.get("image_url")
+            if isinstance(url, str) and "/uploads/player/" in url and o.get("id") is not None and "nickname" in o:
+                out[int(o["id"])] = url
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    for f in glob.glob(str(DATA / "cache" / "*" / "*.json")):
+        try:
+            txt = open(f, encoding="utf-8").read()
+            if "/uploads/player/" in txt:
+                walk(json.loads(txt))
+        except (OSError, ValueError):
+            continue
+    if write:
+        (DATA / "player_photos.json").write_text(json.dumps(out))
+    return out

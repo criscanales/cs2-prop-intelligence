@@ -1,4 +1,5 @@
 """streamlit run cs2model/dashboard/app.py"""
+import base64
 import html
 import json
 import sys
@@ -17,51 +18,141 @@ from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
 from cs2model.inference.predict import Predictor
 from cs2model.scraper.bo3_history import DATA as HDATA
-from cs2model.scraper.bo3_history import HIST_PATH, team_logos
+from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
 from cs2model.scraper.lines import fetch_all_lines
 from cs2model.tracking import store
 from cs2model.training.train import MODEL_DIR
 
-st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="◎")
 st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-html, body, .stApp, .stMarkdown, button, input {font-family: Inter, system-ui, sans-serif;}
-.block-container {padding-top: 4.75rem; max-width: 1600px;}
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
+:root {--bg:#0a0d12;--panel:#11161d;--panel2:#161c25;--line:#232b36;--line2:#2e3846;--accent:#ff7a1a;--accent-soft:rgba(255,122,26,.12);
+  --pos:#22c55e;--pos-soft:rgba(34,197,94,.13);--neg:#ef4444;--neg-soft:rgba(239,68,68,.13);--steel:#7aa2c8;--steel-soft:rgba(122,162,200,.12);
+  --tx:#eef1f5;--tx2:#a3acb9;--mut:#6b7684;--r:10px;--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;
+  --fd:'Barlow Condensed',Rajdhani,'Arial Narrow',sans-serif;--fb:Inter,system-ui,sans-serif;--fm:'JetBrains Mono',ui-monospace,monospace;}
+html, body, .stApp, .stMarkdown, button, input, textarea, select {font-family:var(--fb);}
+.stApp {background:radial-gradient(1200px 500px at 0% -10%,rgba(255,122,26,.07),transparent 60%),
+  linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px) 0 0/40px 40px,
+  linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px) 0 0/40px 40px,var(--bg);}
+.block-container {padding-top:4.25rem;max-width:1640px;}
+header[data-testid="stHeader"] {background:rgba(10,13,18,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);}
+h1,h2,h3 {font-family:var(--fd)!important;letter-spacing:.02em;text-transform:uppercase;}
 .logo {width:18px;height:18px;object-fit:contain;vertical-align:-4px;margin:0 4px 0 0;}
-header[data-testid="stHeader"] {background: rgba(11,15,20,0.94); backdrop-filter: blur(6px); border-bottom: 1px solid #1f2937;}
-div[data-testid="stTabs"] [role="tablist"] {position: sticky; top: 3.75rem; z-index: 60; background: #0b0f14; padding-top: 6px;}
-.age {display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;font-size:0.75rem;font-weight:700;}
-.age.fresh {background:rgba(34,197,94,.15);color:#86efac;} .age.stale {background:rgba(250,204,21,.15);color:#fde047;}
-.age.old {background:rgba(239,68,68,.18);color:#fca5a5;}
-.summary {display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;background:#111827;border:1px solid #1f2937;
-          border-radius:14px;padding:14px 18px;margin:6px 0 12px;}
-.summary .k {color:#94a3b8;font-size:0.75rem;text-transform:uppercase;letter-spacing:.06em;}
-.summary .v {font-size:1.5rem;font-weight:800;color:#f8fafc;} .summary .v.pos {color:#86efac;} .summary .v.neg {color:#fca5a5;}
-.summary .t {grid-column:1/-1;font-weight:700;color:#e2e8f0;}
-section[data-testid="stSidebar"] {background:#0d1218; border-right:1px solid #1f2937;}
-div[data-testid="stMetric"] {background:#111827;border:1px solid #1f2937;border-radius:12px;padding:10px 14px;}
-div[data-testid="stMetricValue"] {font-size:1.4rem;font-weight:800;}
-button[data-baseweb="tab"] {font-weight:600;font-size:0.95rem;}
-.hero {background:linear-gradient(120deg,#0f172a 0%,#10261b 55%,#0b0f14 100%);border:1px solid #1f2937;border-radius:16px;
-       padding:18px 24px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;}
-.hero h1 {font-size:1.7rem;margin:0;font-weight:800;letter-spacing:-0.02em;color:#f8fafc;}
-.hero .sub {color:#94a3b8;font-size:0.85rem;margin-top:2px;}
-.live {display:inline-flex;align-items:center;gap:8px;font-size:0.8rem;color:#86efac;background:rgba(34,197,94,.08);
-       border:1px solid rgba(34,197,94,.25);padding:6px 12px;border-radius:999px;}
-.live.off {color:#94a3b8;background:rgba(148,163,184,.08);border-color:#334155;}
-.live .dot {width:8px;height:8px;border-radius:50%;background:#22c55e;animation:pulse 1.8s infinite;}
-.live.off .dot {background:#64748b;animation:none;}
+/* sidebar */
+section[data-testid="stSidebar"] {background:linear-gradient(180deg,#0d1117,#0a0d12);border-right:1px solid var(--line);}
+section[data-testid="stSidebar"] .block-container, section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding-top:1rem;}
+section[data-testid="stSidebar"] label p {font-size:.78rem;color:var(--tx2);font-weight:500;}
+.brand {display:flex;align-items:center;gap:10px;padding:2px 0 4px;}
+.brand img {height:38px;width:auto;}
+.brand .two {font-family:var(--fd);font-weight:700;font-size:2.1rem;line-height:1;color:var(--accent);margin-left:-2px;}
+.brand-sub {font-family:var(--fd);font-weight:600;letter-spacing:.22em;font-size:.8rem;color:var(--mut);text-transform:uppercase;
+  border-bottom:1px solid var(--line);padding-bottom:12px;margin-bottom:6px;}
+.brand-sub b {color:var(--accent);font-weight:700;}
+.sb-h {display:flex;align-items:center;gap:8px;font-family:var(--fd);font-weight:700;font-size:.85rem;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--tx2);margin:14px 0 4px;}
+.sb-h:before {content:"";width:3px;height:12px;background:var(--accent);}
+.sb-h:after {content:"";flex:1;height:1px;background:var(--line);}
+/* controls */
+.stButton>button, .stDownloadButton>button {border-radius:6px;font-weight:600;letter-spacing:.02em;border:1px solid var(--line2);
+  background:var(--panel2);color:var(--tx);transition:all .15s ease;}
+.stButton>button:hover, .stDownloadButton>button:hover {border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+.stButton>button[kind="primary"] {background:var(--accent);border-color:var(--accent);color:#120800;font-family:var(--fd);
+  font-size:1.02rem;letter-spacing:.1em;text-transform:uppercase;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px);}
+.stButton>button[kind="primary"]:hover {background:#ff8f3d;color:#120800;}
+div[data-baseweb="select"]>div, div[data-baseweb="input"]>div, .stNumberInput input {background:var(--panel)!important;border-color:var(--line2)!important;border-radius:6px!important;}
+span[data-baseweb="tag"] {background:var(--accent-soft)!important;border:1px solid rgba(255,122,26,.35);color:#ffb37a!important;border-radius:4px!important;}
+div[data-testid="stAlert"] {border-radius:8px;border:1px solid var(--line2);}
+div[data-testid="stExpander"] details {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);}
+/* tabs */
+div[data-testid="stTabs"] [role="tablist"] {position:sticky;top:3.75rem;z-index:60;background:var(--bg);padding-top:6px;gap:4px;border-bottom:1px solid var(--line);}
+[role="tab"] p, button[data-baseweb="tab"] p {font-family:var(--fd)!important;font-weight:600!important;font-size:1.05rem!important;letter-spacing:.12em;text-transform:uppercase;}
+[role="tab"] {color:var(--mut);} [role="tab"][aria-selected="true"] {color:var(--tx)!important;}
+button[data-baseweb="tab"] {font-family:var(--fd);font-weight:600;font-size:1.05rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);padding:6px 14px;}
+button[data-baseweb="tab"][aria-selected="true"] {color:var(--tx);}
+div[data-baseweb="tab-highlight"] {background:var(--accent)!important;height:3px;}
+/* metrics (other tabs) */
+div[data-testid="stMetric"] {background:var(--panel);border:1px solid var(--line);border-top:2px solid var(--accent);border-radius:8px;padding:10px 14px;}
+div[data-testid="stMetricLabel"] p {font-family:var(--fd);letter-spacing:.12em;text-transform:uppercase;color:var(--tx2);font-size:.8rem;}
+div[data-testid="stMetricValue"] {font-family:var(--fm);font-size:1.35rem;font-weight:700;}
+div[data-testid="stDataFrame"] {border:1px solid var(--line);border-radius:var(--r);overflow:hidden;}
+/* hero */
+.hero {position:relative;overflow:hidden;background:linear-gradient(115deg,#121821 0%,#0f141b 60%,#160f0a 100%);border:1px solid var(--line);
+  border-left:3px solid var(--accent);border-radius:var(--r);padding:20px 26px;margin-bottom:14px;display:flex;justify-content:space-between;
+  align-items:center;gap:18px;flex-wrap:wrap;clip-path:polygon(0 0,calc(100% - 22px) 0,100% 22px,100% 100%,0 100%);}
+.hero:after {content:"";position:absolute;right:120px;top:-60px;width:220px;height:220px;border:1px solid rgba(255,122,26,.12);border-radius:50%;
+  background:radial-gradient(circle,transparent 38%,rgba(255,122,26,.06) 39%,transparent 40%),linear-gradient(rgba(255,122,26,.1),rgba(255,122,26,.1)) center/1px 100% no-repeat,
+  linear-gradient(90deg,rgba(255,122,26,.1),rgba(255,122,26,.1)) center/100% 1px no-repeat;pointer-events:none;}
+.hero .eyebrow {font-family:var(--fd);font-weight:600;letter-spacing:.24em;font-size:.78rem;color:var(--accent);text-transform:uppercase;}
+.hero h1 {font-family:var(--fd)!important;font-size:2.4rem;line-height:1;margin:2px 0 4px;padding:0;font-weight:700;letter-spacing:.03em;color:var(--tx);}
+.hero h1 em {font-style:normal;color:var(--accent);}
+.hero .sub {color:var(--tx2);font-size:.85rem;}
+.hero .chips {display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;}
+.chip {font-family:var(--fm);font-size:.72rem;padding:3px 9px;border-radius:4px;background:var(--panel2);border:1px solid var(--line2);color:var(--tx2);}
+.chip b {color:var(--tx);font-weight:700;}
+.hero .right {display:flex;flex-direction:column;align-items:flex-end;gap:8px;z-index:1;}
+.live {display:inline-flex;align-items:center;gap:8px;font-family:var(--fd);font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+  font-size:.8rem;color:#86efac;background:var(--pos-soft);border:1px solid rgba(34,197,94,.3);padding:5px 12px;border-radius:4px;}
+.live.off {color:var(--tx2);background:var(--steel-soft);border-color:var(--line2);}
+.live .dot {width:8px;height:8px;border-radius:50%;background:var(--pos);animation:pulse 1.8s infinite;}
+.live.off .dot {background:var(--mut);animation:none;}
 @keyframes pulse {0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 9px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
-.cards {display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin:4px 0 18px;}
-.card {background:#111827;border:1px solid #1f2937;border-left:4px solid var(--c);border-radius:12px;padding:12px 14px;}
-.card .pl {font-weight:700;font-size:1.05rem;color:#f1f5f9;}
-.card .mt {color:#94a3b8;font-size:0.75rem;margin-top:2px;}
-.card .pk {font-size:1.3rem;font-weight:800;color:var(--c);margin:8px 0 6px;}
-.badge {display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.7rem;font-weight:700;margin:0 4px 2px 0;}
-.b-edge {background:rgba(34,197,94,.15);color:#86efac;} .b-pp {background:rgba(168,85,247,.18);color:#d8b4fe;}
-.b-ud {background:rgba(250,204,21,.14);color:#fde047;} .b-new {background:rgba(59,130,246,.2);color:#93c5fd;}
-.b-tier {background:rgba(148,163,184,.15);color:#cbd5e1;}
-.sect {font-size:0.8rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:4px 0 6px;}
+.age {display:inline-block;font-family:var(--fm);padding:3px 9px;border-radius:4px;font-size:.72rem;font-weight:700;}
+.age.fresh {background:var(--pos-soft);color:#86efac;} .age.stale {background:rgba(250,204,21,.13);color:#fde047;} .age.old {background:var(--neg-soft);color:#fca5a5;}
+/* kpi row */
+.kpis {display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin:2px 0 18px;}
+.kpi {background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;position:relative;}
+.kpi:before {content:"";position:absolute;left:0;top:10px;bottom:10px;width:2px;background:var(--line2);}
+.kpi.hl:before {background:var(--accent);}
+.kpi .k {font-family:var(--fd);font-weight:600;letter-spacing:.14em;text-transform:uppercase;font-size:.78rem;color:var(--tx2);}
+.kpi .v {font-family:var(--fm);font-weight:700;font-size:1.55rem;color:var(--tx);line-height:1.25;}
+.kpi .v.pos {color:#4ade80;} .kpi .v.acc {color:var(--accent);}
+@media (max-width:900px){.kpis{grid-template-columns:repeat(2,1fr);}}
+/* section headings */
+.sect {display:flex;align-items:center;gap:10px;font-family:var(--fd);font-weight:700;font-size:1.05rem;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--tx);margin:8px 0 10px;}
+.sect:before {content:"";width:10px;height:10px;border:2px solid var(--accent);transform:rotate(45deg);}
+.sect:after {content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--line2),transparent);}
+/* play cards */
+.cards {display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px;margin:0 0 22px;}
+.pc {position:relative;background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid var(--line);border-radius:var(--r);
+  padding:14px 14px 12px;overflow:hidden;transition:border-color .15s, transform .15s;}
+.pc:hover {border-color:var(--line2);transform:translateY(-1px);}
+.pc:before {content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--c);}
+.pc .tag {position:absolute;right:0;top:0;font-family:var(--fd);font-weight:700;letter-spacing:.14em;font-size:.78rem;padding:3px 10px 3px 16px;
+  color:#0a0d12;background:var(--c);clip-path:polygon(10px 0,100% 0,100% 100%,0 100%);}
+.pc .who {display:flex;align-items:center;gap:10px;}
+.av {width:44px;height:44px;border-radius:8px;object-fit:cover;object-position:top;background:var(--panel2);border:1px solid var(--line2);flex:none;}
+.av.ini {display:flex;align-items:center;justify-content:center;font-family:var(--fd);font-weight:700;font-size:1.2rem;color:var(--tx2);}
+.pc .pl {font-family:var(--fd);font-weight:700;font-size:1.4rem;line-height:1;color:var(--tx);letter-spacing:.02em;}
+.pc .mt {color:var(--tx2);font-size:.74rem;margin-top:4px;}
+.pc .bet {display:flex;align-items:baseline;gap:8px;margin:12px 0 10px;}
+.pc .bet .sd {font-family:var(--fd);font-weight:700;font-size:1.05rem;letter-spacing:.1em;color:var(--c);}
+.pc .bet .ln {font-family:var(--fm);font-weight:700;font-size:1.7rem;color:var(--tx);line-height:1;}
+.pc .bet .st {font-family:var(--fd);font-weight:600;font-size:1rem;letter-spacing:.08em;text-transform:uppercase;color:var(--tx2);}
+.pc .edge {margin-left:auto;font-family:var(--fm);font-weight:700;font-size:.95rem;color:var(--accent);background:var(--accent-soft);
+  border:1px solid rgba(255,122,26,.35);padding:2px 8px;border-radius:4px;}
+.bars {display:grid;grid-template-columns:auto 1fr auto;gap:5px 8px;align-items:center;font-size:.7rem;color:var(--tx2);margin-bottom:10px;}
+.bars .lbl {font-family:var(--fd);letter-spacing:.12em;text-transform:uppercase;font-weight:600;}
+.bars .val {font-family:var(--fm);color:var(--tx);text-align:right;}
+.bar {height:6px;background:#1d2530;border-radius:3px;position:relative;overflow:hidden;}
+.bar i {position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--c);}
+.bar u {position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--tx);opacity:.7;}
+.foot {display:flex;flex-wrap:wrap;gap:5px;border-top:1px dashed var(--line);padding-top:9px;}
+.badge {display:inline-block;padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.04em;margin:0 4px 2px 0;}
+.foot .badge {margin:0;}
+.b-edge {background:var(--pos-soft);color:#86efac;} .b-pp {background:rgba(168,85,247,.16);color:#d8b4fe;}
+.b-ud {background:rgba(250,204,21,.12);color:#fde047;} .b-new {background:var(--steel-soft);color:#bcd3ea;}
+.b-tier {background:rgba(148,163,184,.12);color:#cbd5e1;} .b-A {background:var(--accent);color:#120800;} .b-B {background:var(--accent-soft);color:#ffb37a;}
+/* slip summary */
+.summary {display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;background:var(--panel);border:1px solid var(--line);
+  border-top:2px solid var(--accent);border-radius:var(--r);padding:14px 18px;margin:6px 0 12px;}
+.summary .k {font-family:var(--fd);color:var(--tx2);font-size:.8rem;text-transform:uppercase;letter-spacing:.14em;}
+.summary .v {font-family:var(--fm);font-size:1.45rem;font-weight:700;color:var(--tx);} .summary .v.pos {color:#4ade80;} .summary .v.neg {color:#f87171;}
+.summary .t {grid-column:1/-1;font-family:var(--fd);font-size:1.1rem;letter-spacing:.06em;font-weight:700;color:var(--tx);}
+.phead {display:flex;align-items:center;gap:14px;margin:4px 0 10px;}
+.phead .av {width:64px;height:64px;}
+.phead .pl {font-family:var(--fd);font-weight:700;font-size:1.9rem;line-height:1;color:var(--tx);}
+.phead .mt {color:var(--tx2);font-size:.8rem;margin-top:4px;}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -123,6 +214,45 @@ def poll():
 LOGOS = load_logos()
 
 
+@st.cache_data(ttl=3600)
+def load_photos():
+    f = HDATA / "player_photos.json"
+    if not f.exists():
+        player_photos()
+    return {int(k): v for k, v in json.loads(f.read_text()).items()} if f.exists() else {}
+
+
+PHOTOS = load_photos()
+LOGO_SRC = "data:image/png;base64," + base64.b64encode((Path(__file__).parent / "assets" / "cs2_logo_light.png").read_bytes()).decode()
+BRAND = (f'<div class="brand"><img src="{LOGO_SRC}" alt="Counter-Strike"/></div>'
+         '<div class="brand-sub">Props <b>+EV</b> terminal</div>')
+
+
+def avatar(pid, name):
+    u = PHOTOS.get(int(pid)) if pid is not None and pid == pid else None
+    if u:
+        return f'<img class="av" src="{html.escape(u)}" loading="lazy"/>'
+    return f'<div class="av ini">{html.escape((name or "?")[:2].upper())}</div>'
+
+
+def play_card(r, help_edge="", help_tier=""):
+    over = r.side == "over"
+    col = "var(--pos)" if over else "var(--neg)"
+    plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
+    tier = r.tier if r.tier in ("A", "B") else "tier"
+    chg = getattr(r, "chg", "")
+    new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
+    be = max(0.0, min(1.0, r.p_side - r.edge))
+    return f"""<div class="pc" style="--c:{col}"><div class="tag">{'OVER' if over else 'UNDER'}</div>
+<div class="who">{avatar(getattr(r, "player_id", None), r.player)}<div><div class="pl">{html.escape(r.player)}</div>
+<div class="mt">{logo(r.team_id)}{html.escape(r.team)} <span style="color:var(--mut)">vs</span> {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div></div></div>
+<div class="bet"><span class="sd">{'O' if over else 'U'}</span><span class="ln">{r.line:g}</span><span class="st">{r.stat}</span>
+<span class="edge" title="{help_edge}">{r.edge:+.1%}</span></div>
+<div class="bars"><span class="lbl">P(side)</span><span class="bar" title="Model probability; white tick = breakeven"><i style="width:{r.p_side:.1%}"></i><u style="left:{be:.1%}"></u></span><span class="val">{r.p_side:.1%}</span>
+<span class="lbl">Mean</span><span class="bar" title="Model mean vs line (white tick)"><i style="width:{min(1, r.model_mean / max(r.line, 1) / 2):.1%};background:var(--steel)"></i><u style="left:50%"></u></span><span class="val">{r.model_mean:.1f}</span></div>
+<div class="foot">{plat}<span class="badge b-{tier}" title="{help_tier}">Conf {r.tier}</span>{new}</div></div>"""
+
+
 def logo(team_id):
     u = LOGOS.get(int(team_id)) if team_id == team_id else None
     return f'<img class="logo" src="{html.escape(u)}"/>' if u else ""
@@ -130,7 +260,8 @@ def logo(team_id):
 
 # ---------------- sidebar
 with st.sidebar:
-    st.markdown("### CS2 Props +EV")
+    st.markdown(BRAND, unsafe_allow_html=True)
+    st.markdown('<div class="sb-h">Live feed</div>', unsafe_allow_html=True)
     auto = st.toggle("Auto-update on new lines", value=True)
     every = max(60, int(settings.get("auto_refresh_sec", 120)))
     forced = st.session_state.pop("force_refresh", False)
@@ -176,7 +307,7 @@ with st.sidebar:
     for e in (res or {}).get("errors", []):
         st.warning(f"Source unavailable: {e}")
     unverified = [p for p, c in payouts.items() if not c.get("verified")]
-    st.subheader("Filters")
+    st.markdown('<div class="sb-h">Filters</div>', unsafe_allow_html=True)
     platforms = st.multiselect("Platform", ["prizepicks", "underdog"], ["prizepicks", "underdog"])
     stats = st.multiselect("Stat", ["kills", "headshots"], ["kills", "headshots"])
     min_edge = st.slider("Min edge", 0.0, 0.15, float(settings["min_edge"]), 0.005, format="%.3f")
@@ -184,13 +315,15 @@ with st.sidebar:
     tiers = st.multiselect("Confidence tier", ["A", "B", "C", "-"], ["A", "B", "C", "-"],
                            help="A/B/C = confidence in a +EV pick (sample size, tenure, edge, sharp odds). '-' = not a bet.")
     q = st.text_input("Search player / team")
-    st.subheader("Bankroll")
+    st.markdown('<div class="sb-h">Bankroll</div>', unsafe_allow_html=True)
     settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings["bankroll"]), 50.0)
     settings["kelly_fraction"] = st.slider("Kelly fraction", 0.05, 1.0, float(settings["kelly_fraction"]), 0.05)
     settings["daily_exposure_pct"] = st.slider("Daily max exposure", 0.01, 0.5, float(settings["daily_exposure_pct"]), 0.01)
 
 if res is None:
-    st.markdown("## CS2 Props +EV")
+    st.markdown('<div class="hero"><div><div class="eyebrow">Matchday board</div><h1>CS2 Props <em>+EV</em></h1>'
+                '<div class="sub">Model-driven CS2 prop intelligence</div></div><div class="right"><div class="live off">'
+                '<span class="dot"></span>Pricing in progress</div></div></div>', unsafe_allow_html=True)
     st.warning("Pricing in progress (first load). This is the raw board; edges, stakes and slips appear when pricing finishes.")
     raw = (st.session_state.get("job") or {}).get("lines")
     if raw is None:
@@ -237,12 +370,13 @@ def hero():
     age = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(res["ts"])).total_seconds() / 60
     cls = "fresh" if age < 5 else "stale" if age < 15 else "old"
     age_txt = "just now" if age < 1 else f"{age:.0f} min old"
-    st.markdown(f"""<div class="hero"><div><h1>CS2 Props +EV</h1>
-<div class="sub">Updated {res['ts']:%b %d, %H:%M} UTC <span class="age {cls}" title="Time since lines/odds were last pulled and priced">
-data {age_txt}</span></div>
-<div class="sub">{res['n_lines']} lines on the board · {len(slate)} priced · {len(ch['added'])} new / {len(ch['moved'])} moved /
-{len(ch['removed'])} pulled since last update</div></div>
-<div class="{live_cls}"><span class="dot"></span>{live_txt}</div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="hero"><div><div class="eyebrow">Matchday board</div><h1>CS2 Props <em>+EV</em></h1>
+<div class="sub">Model-driven CS2 prop intelligence · updated {res['ts']:%b %d, %H:%M} UTC</div>
+<div class="chips"><span class="chip"><b>{res['n_lines']}</b> lines on board</span><span class="chip"><b>{len(slate)}</b> priced</span>
+<span class="chip"><b>{res['n_books']}</b> matches with odds</span><span class="chip" title="Since the previous pull">
+<b>{len(ch['added'])}</b> new · <b>{len(ch['moved'])}</b> moved · <b>{len(ch['removed'])}</b> pulled</span></div></div>
+<div class="right"><div class="{live_cls}"><span class="dot"></span>{live_txt}</div>
+<span class="age {cls}" title="Time since lines/odds were last pulled and priced">DATA {age_txt.upper()}</span></div></div>""", unsafe_allow_html=True)
 
 
 hero()
@@ -260,25 +394,15 @@ tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Pla
 # ---------------- slate
 with tab_slate:
     ev = slate[slate.plus_ev]
-    c = st.columns(5)
-    c[0].metric("Lines priced", len(slate))
-    c[1].metric("+EV picks", len(ev))
-    c[2].metric("Confidence A", int((ev.tier == "A").sum()))
-    c[3].metric("Best edge", f"{ev.edge.max():.1%}" if len(ev) else "–", help=HELP["edge"])
-    c[4].metric("Skipped lines", len(res["unmatched"]), help="Pulled lines not priced (see 'Skipped lines' below for reasons)")
+    best = f"{ev.edge.max():+.1%}" if len(ev) else "–"
+    kp = [("Lines priced", len(slate), "", ""), ("+EV picks", len(ev), "pos", ""), ("Confidence A", int((ev.tier == "A").sum()), "acc", HELP["tier"]),
+          ("Best edge", best, "acc", HELP["edge"]), ("Skipped lines", len(res["unmatched"]), "", "Pulled lines not priced (see Line accounting)")]
+    st.markdown('<div class="kpis">' + "".join(f'<div class="kpi{" hl" if c_ else ""}" title="{h}"><div class="k">{k}</div><div class="v {c_}">{v}</div></div>'
+                                               for k, v, c_, h in kp) + "</div>", unsafe_allow_html=True)
     top = view[view.plus_ev].sort_values("edge", ascending=False).head(8)
     if len(top):
-        cards = []
-        for _, r in top.iterrows():
-            col = "#22c55e" if r.side == "over" else "#ef4444"
-            plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
-            new = f'<span class="badge b-new">{html.escape(r.chg)}</span>' if r.chg else ""
-            cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
-<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div>
-<div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
-<span class="badge b-edge" title="{HELP['edge']}">edge {r.edge:+.1%}</span><span class="badge b-tier">P {r.p_side:.0%} · mean {r.model_mean:.1f}</span>
-{plat}<span class="badge b-tier" title="{HELP['tier']}">conf {r.tier}</span>{new}</div>""")
-        st.markdown('<div class="sect">Top +EV plays</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+        st.markdown('<div class="sect">Top +EV plays</div><div class="cards">' + "".join(play_card(r, HELP["edge"], HELP["tier"]) for _, r in top.iterrows())
+                    + "</div>", unsafe_allow_html=True)
     st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
     if pricing:
         st.warning("Repricing in progress: showing the previous slate until the new one is ready.")
@@ -290,13 +414,13 @@ with tab_slate:
     def color(row):
         r = view.loc[row.name]
         if r.plus_ev:
-            bg = "rgba(34,197,94,0.18)" if r.side == "over" else "rgba(239,68,68,0.18)"
+            bg = "rgba(34,197,94,0.14)" if r.side == "over" else "rgba(239,68,68,0.14)"
         else:
-            bg = "rgba(148,163,184,0.06)"
+            bg = "rgba(0,0,0,0)"
         return [f"background-color: {bg}"] * len(row)
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
-                                              "edge": "{:+.1%}", "ev": "{:+.1%}"})
+                                              "edge": "{:+.1%}", "ev": "{:+.1%}"}, na_rep="")
     st.dataframe(sty, width="stretch", height=620, hide_index=True,
                  column_config={"edge": st.column_config.Column("edge", help=HELP["edge"]),
                                 "ev": st.column_config.Column("EV", help=HELP["ev"]),
@@ -304,6 +428,7 @@ with tab_slate:
                                 "why": st.column_config.Column("why", help=HELP["why"], width="large"),
                                 "logo": st.column_config.ImageColumn("", width="small"),
                                 "chg": st.column_config.Column("chg", help="NEW = line added, a→b = line moved since last update")})
+    st.markdown('<div class="sect">Actions</div>', unsafe_allow_html=True)
     st.caption("Green = +EV over · Red = +EV under · Gray = no qualifying edge. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
@@ -331,12 +456,15 @@ with tab_player:
         pick = st.selectbox("Line", opts.index, format_func=lambda i: opts[i])
         r = slate.loc[pick]
         pmf = details[pick]["pmf"]
+        st.markdown(f'<div class="phead">{avatar(getattr(r, "player_id", None), r.player)}<div><div class="pl">{html.escape(r.player)}</div>'
+                    f'<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · '
+                    f'{r.stat} {r.maps_label} · line {r.line:g}</div></div></div>', unsafe_allow_html=True)
         a, b = st.columns([3, 2])
         with a:
             vals = np.flatnonzero(pmf > 5e-4)
             fig = go.Figure(go.Bar(x=vals, y=pmf[vals], marker_color=["#22c55e" if v > r.line else "#ef4444" for v in vals]))
             fig.add_vline(x=r.line, line_dash="dash", line_color="#e5e7eb", annotation_text=f"line {r.line}")
-            fig.add_vline(x=r.model_mean, line_color="#60a5fa", annotation_text=f"mean {r.model_mean:.1f}")
+            fig.add_vline(x=r.model_mean, line_color="#ff7a1a", annotation_text=f"mean {r.model_mean:.1f}")
             fig.update_layout(template="plotly_dark", height=360, margin=dict(l=10, r=10, t=30, b=10),
                               title=f"{r.player} {r.stat} {r.maps_label}: predictive distribution",
                               xaxis_title=r.stat, yaxis_title="probability", bargap=0.05)
@@ -369,17 +497,8 @@ with tab_player:
 
 # ---------------- parlays
 def leg_cards(ids):
-    cards = []
-    for i in ids:
-        r = slate.loc[i]
-        col = "#22c55e" if r.side == "over" else "#ef4444"
-        cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
-<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div>
-<div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
-<span class="badge b-tier" title="Mean of the model's predictive distribution">mean {r.model_mean:.1f}</span>
-<span class="badge b-tier" title="Calibrated model probability of this side (a push voids the leg)">P(side) {r.p_side:.1%}</span>
-<span class="badge b-edge" title="{HELP['edge']}">edge {r.edge:+.1%}</span></div>""")
-    st.markdown('<div class="sect">Legs</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.markdown('<div class="sect">Legs</div><div class="cards">' + "".join(play_card(slate.loc[i], HELP["edge"], HELP["tier"]) for i in ids)
+                + "</div>", unsafe_allow_html=True)
 
 
 def slip_summary(title, p_all, max_pay, ev, stake, verified):

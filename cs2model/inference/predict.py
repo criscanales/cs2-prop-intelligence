@@ -236,6 +236,13 @@ class Predictor:
         t1 = time.perf_counter()
         by_key, cache = {ps.key: ps for ps in pspecs}, {}
         pmfs = {(pk, stat, mp): A.leg_pmf(by_key[pk], spec, stat, mp, cache) for pk, stat, mp in job["legs"]}
+        p3 = A.p_map3(spec)
+        for k, pmf in pmfs.items():
+            if spec.best_of == 3 and tuple(k[2]) == (3,) and p3 > 1e-6:
+                # a "Map 3" line is void if map 3 isn't played: price it conditional on map 3 happening
+                c = pmf.copy()
+                c[0] = max(0.0, c[0] - (1 - p3))
+                pmfs[k] = c / c.sum()
         return {"spec": spec, "p_map": p_map, "rounds": rounds, "pmfs": pmfs,
                 "timings": {"model_predict": t1 - t0, "analytic": time.perf_counter() - t1}}
 
