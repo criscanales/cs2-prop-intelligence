@@ -54,6 +54,8 @@ class Predictor:
         share = recent.map_name.value_counts(normalize=True)
         self.active_maps = sorted(share[share >= ACTIVE_MAP_MIN_SHARE].index)
         self.team_games = tt
+        top = tt[tt.tier.isin(self.settings["tiers"])]
+        self.team_counts = top.team_id.value_counts()
         self._feat_hist = None
 
     # ---------- name resolution
@@ -142,6 +144,12 @@ class Predictor:
             if pid is None or t1 is None or t2 is None:
                 unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent,
                                   "reason": "player not in bo3 history" if pid is None else "team not matched"})
+                continue
+            low = [n for n, t in ((ln.team, t1), (ln.opponent, t2))
+                   if self.team_counts.get(t, 0) < self.settings["min_team_maps"]]
+            if low:
+                unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent,
+                                  "reason": f"not enough tier-1/2 maps: {', '.join(low)}"})
                 continue
             key = tuple(sorted((t1, t2)))
             groups.setdefault(key, []).append((ln, pid, t1))

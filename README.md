@@ -49,7 +49,9 @@ source is skipped and reported in the CLI and dashboard instead of being worked 
 - **HLTV.** Plain HTTP gets a Cloudflare 403 challenge. Getting past it would mean bypassing access controls, so HLTV is skipped.
 - **thunderpick.io directly.** It also answers 403 to non-browser clients. Its odds come through bo3.gg instead.
 
-Window: `history_days: 92` in `config/settings.yaml` (last ~3 months), tiers S/A/B/C.
+Window: `history_days: 92` in `config/settings.yaml` (last ~3 months). Only tier-1/2 events (bo3.gg tiers S/A/B)
+are crawled and modelled. Lines are priced only when both teams have at least `min_team_maps` tier-1/2 maps in
+the window, which skips one-off and unranked teams.
 
 ## Model
 
@@ -67,7 +69,7 @@ Window: `history_days: 92` in `config/settings.yaml` (last ~3 months), tiers S/A
    - Kills follow a NegBin with dispersion fit on validation data. HS | kills follow a Beta-Binomial.
    - Map picks are drawn from both teams' recent map pools. Map 3 is played only when maps 1–2 split.
    - A 50k-draw joint simulation per match produces P(over/under) for any line, plus quantiles.
-4. **Calibration.** Isotonic regression on the validation split, separately for kills/HS and single-map/multi-map.
+4. **Calibration.** Platt scaling on logit(P) fit on the validation split, separately for kills/HS and single-map/multi-map.
 5. **Baselines.** A negative-binomial GLM (statsmodels, same offset) and a naive last-10 average with a Poisson distribution.
 6. **Validation.** Time-ordered 70/15/15 split by map date, no shuffling. Metrics: MAE, pinball loss (q10/50/90), Brier, log loss, calibration table, hit rate, flat-stake ROI, and edge buckets.
    - Historical prop lines aren't archived publicly, so backtest "lines" are the naive mean rounded to .5. Backtest ROI is therefore only indicative. Real performance comes from the tracker.

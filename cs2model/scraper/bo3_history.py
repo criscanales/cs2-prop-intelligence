@@ -107,7 +107,7 @@ def rows_for_match(m, teams_inc, tour):
     return rows
 
 
-def crawl(days=92, end: date | None = None, tiers=("s", "a", "b", "c")):
+def crawl(days=92, end: date | None = None, tiers=("s", "a", "b")):
     end = end or datetime.now(timezone.utc).date()
     rows, tours = [], {}
     for i in range(days, -1, -1):

@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import statsmodels.api as sm
 from scipy import optimize, stats
-from sklearn.isotonic import IsotonicRegression
 
 from ..backtest import metrics as M
 from ..features.build import FEATURES, build_features
@@ -20,6 +19,7 @@ from ..inference import distribution as D
 from ..parlay.engine import breakeven_per_leg, load_yaml
 from ..scraper.bo3_history import HIST_PATH
 from ..scraper.http import ROOT
+from .calibration import Platt
 
 MODEL_DIR = ROOT / "models"
 MIN_HISTORY = 3
@@ -117,7 +117,8 @@ def train(hist=None):
     be = breakeven_per_leg(payouts["prizepicks"]["plays"]["power_2"])
     hist = hist if hist is not None else pd.read_csv(HIST_PATH)
     feat = build_features(hist)
-    feat = feat[(feat.n_maps >= MIN_HISTORY) & feat.kills.notna() & feat.headshots.notna() & (feat.rounds > 0)]
+    # features use every crawled map as history; training/evaluation only on tier-1/2 maps
+    feat = feat[feat.tier.isin(settings["tiers"]) & (feat.n_maps >= MIN_HISTORY) & feat.kills.notna() & feat.headshots.notna() & (feat.rounds > 0)]
     feat = feat.reset_index(drop=True)
     feat["split"] = time_split(feat)
     tr, va, te = (feat[feat.split == s].reset_index(drop=True) for s in ("train", "val", "test"))
@@ -169,12 +170,12 @@ def train(hist=None):
     calibrators = {}
     for stat, P, L, y in (("kills", pv["lgbm"][0], lk, va.kills.values), ("headshots", pv["lgbm"][1], lh, va.headshots.values)):
         p = M.p_over_rows(P, L)
-        calibrators[f"{stat}_map"] = IsotonicRegression(out_of_bounds="clip", y_min=0.01, y_max=0.99).fit(p, (y > L).astype(int))
+        calibrators[f"{stat}_map"] = Platt().fit(p, (y > L).astype(int))
         P12 = np.array([D.convolve(P[a], P[b]) for a, b in zip(i1, i2)])
         L12 = np.floor(L[i1] + L[i2]) + 0.5 if len(i1) else np.array([])
         y12 = y[i1] + y[i2]
         if len(i1) > 200:
-            calibrators[f"{stat}_series"] = IsotonicRegression(out_of_bounds="clip", y_min=0.01, y_max=0.99).fit(
+            calibrators[f"{stat}_series"] = Platt().fit(
                 M.p_over_rows(P12, L12), (y12 > L12).astype(int))
         else:
             calibrators[f"{stat}_series"] = calibrators[f"{stat}_map"]
