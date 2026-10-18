@@ -503,7 +503,7 @@ def profile_header(r):
             f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div></div></div>')
 
 
-SHADE = {True: ("#15803d", "#4ade80", "#bbf7d0"), False: ("#475569", "#94a3b8", "#cbd5e1")}
+SHADE = {True: ("#15803d", "#4ade80", "#bbf7d0"), False: ("#b91c1c", "#f87171", "#fecaca")}
 
 
 def series_chart(r, h, scope):
@@ -553,7 +553,7 @@ def series_chart(r, h, scope):
         fig.add_bar(x=labels, y=v[m], name=f"Map {m}", marker=dict(color=[SHADE[bool(o)][k] for o in over], line=dict(color="#0a0d12", width=1.5)),
                     customdata=cd, hovertemplate=ht)
     fig.add_scatter(x=labels, y=v.total, mode="text", text=[f"{'▲' if o else '▼'} {int(t)}" for o, t in zip(over, v.total)],
-                    textposition="top center", textfont=dict(color=["#86efac" if o else "#cbd5e1" for o in over], size=13, family="JetBrains Mono"),
+                    textposition="top center", textfont=dict(color=["#86efac" if o else "#fca5a5" for o in over], size=13, family="JetBrains Mono"),
                     hoverinfo="skip", showlegend=False)
     fig.add_hline(y=r.line, line_dash="dash", line_color="#e8752a", line_width=1.5)
     fig.add_annotation(xref="paper", x=1.0, xanchor="left", y=r.line, text=f" {r.line:g}", showarrow=False,
@@ -566,7 +566,7 @@ def series_chart(r, h, scope):
                                  range=[0, max(v.total.max(), r.line) * 1.18]))
     sw = "".join(f'<span><i style="background:{SHADE[True][k]}"></i><i style="background:{SHADE[False][k]}"></i>Map {m}</span>'
                  for k, m in enumerate(maps))
-    st.markdown(f'<div class="lg">{sw}<span>▲ green = over</span><span>▼ gray = under</span><span><i class="dash"></i>Line {r.line:g}</span>'
+    st.markdown(f'<div class="lg">{sw}<span>▲ green = over</span><span>▼ red = under</span><span><i class="dash"></i>Line {r.line:g}</span>'
                 f'<span class="mut">Hover a bar for map values</span></div>', unsafe_allow_html=True)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
 
