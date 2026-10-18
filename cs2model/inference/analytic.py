@@ -9,6 +9,7 @@ import itertools
 import numpy as np
 
 from . import distribution as D
+from .simulate import win_vec
 
 K = D.KMAX
 KOUT = 3 * K
@@ -33,9 +34,16 @@ def pick_orders(w, L):
     return P3
 
 
+def slot_marginal(w, j):
+    """P(map i is the j-th pick) under Plackett-Luce."""
+    P = pick_orders(w, j)
+    return P if j == 1 else P.sum(axis=tuple(range(j - 1)))
+
+
 def p_side_win(spec, ps, j):
-    p1 = spec.p_map_team1.get(j, 0.5)
-    return p1 if ps.side == 1 else 1 - p1
+    """The player's side's P(win map slot j), per candidate map."""
+    v = win_vec(spec, j)
+    return v if ps.side == 1 else 1 - v
 
 
 def slot_pmfs(ps, spec, j):
@@ -49,7 +57,7 @@ def slot_pmfs(ps, spec, j):
     M, R = len(kpr), len(sup)
     G = np.empty((2, M, K + 1))
     for won, mult in ((1, m_w), (0, m_l)):
-        pm = D.nb_pmf((kpr[:, None] * sup[None, :] * mult).ravel(), ps.alpha).reshape(M, R, K + 1)
+        pm = D.nb_pmf((kpr[:, None] * sup[None, :] * mult[:, None]).ravel(), ps.alpha).reshape(M, R, K + 1)
         G[won] = np.einsum("r,mrk->mk", pr, pm)
     G /= G.sum(-1, keepdims=True)
     H = np.empty_like(G)
@@ -79,17 +87,15 @@ def leg_pmf(ps, spec, stat, maps, cache=None):
     pw = [p_side_win(spec, ps, j) for j in range(1, L + 1)]
     acc = np.zeros(NF // 2 + 1, complex)
     for wins in itertools.product((0, 1), repeat=L):
-        pr = float(np.prod([pw[j] if wins[j] else 1 - pw[j] for j in range(L)]))
-        if pr <= 0:
-            continue
         map3_played = not (spec.best_of == 3 and L == 3 and wins[0] == wins[1])
         V = P[..., None].astype(complex)
         for j in range(L, 0, -1):
+            f = (pw[j - 1] if wins[j - 1] else 1 - pw[j - 1])[:, None]  # P(this result | map), per map
             if j in want and (j != 3 or map3_played):
-                V = (V * Gf[j][wins[j - 1]]).sum(axis=-2)
+                V = (V * (f * Gf[j][wins[j - 1]])).sum(axis=-2)
             else:
-                V = V.sum(axis=-2)
-        acc += pr * V
+                V = (V * f).sum(axis=-2)
+        acc += V
     pmf = np.clip(np.fft.irfft(acc, NF)[: KOUT + 1], 0, None)
     return pmf / pmf.sum()
 
@@ -97,8 +103,12 @@ def leg_pmf(ps, spec, stat, maps, cache=None):
 def p_map3(spec):
     if spec.best_of != 3:
         return 1.0 if spec.best_of > 3 else 0.0
-    p1, p2 = spec.p_map_team1.get(1, 0.5), spec.p_map_team1.get(2, 0.5)
-    return p1 * (1 - p2) + (1 - p1) * p2
+    v1, v2 = win_vec(spec, 1), win_vec(spec, 2)
+    if len(v1) < 2:
+        p1, p2 = float(v1[0]), float(v2[0])
+        return p1 * (1 - p2) + (1 - p1) * p2
+    P2 = pick_orders(spec.map_weights, 2)
+    return float((P2 * (v1[:, None] * (1 - v2[None, :]) + (1 - v1[:, None]) * v2[None, :])).sum())
 
 
 def map_preds(spec, pkey):
@@ -118,8 +128,8 @@ def map_preds(spec, pkey):
     G, pw, k = slot_pmfs(ps, spec, 1), p_side_win(spec, ps, 1), np.arange(K + 1)
     out = []
     for i, m in enumerate(spec.maps):
-        ek = pw * (G["kills"][1, i] @ k) + (1 - pw) * (G["kills"][0, i] @ k)
-        eh = pw * (G["headshots"][1, i] @ k) + (1 - pw) * (G["headshots"][0, i] @ k)
+        ek = pw[i] * (G["kills"][1, i] @ k) + (1 - pw[i]) * (G["kills"][0, i] @ k)
+        eh = pw[i] * (G["headshots"][1, i] @ k) + (1 - pw[i]) * (G["headshots"][0, i] @ k)
         out.append({"map": m, "p_played": float(p_play[i]), "kills": float(ek), "headshots": float(eh),
-                    "kpr": float(ps.kpr.get(m, np.nan)), "p_win": float(pw)})
+                    "kpr": float(ps.kpr.get(m, np.nan)), "p_win": float(pw[i])})
     return out

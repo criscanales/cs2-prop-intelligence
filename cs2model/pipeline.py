@@ -51,6 +51,8 @@ def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sour
     if log:
         store.snapshot_lines(lines, con)
     slate, details, unmatched = predictor.build_slate(lines, books, n_sims=n_sims, con=con)
+    if log:
+        store.log_preds(slate, con)
     return {"slate": slate, "details": details, "unmatched": unmatched, "errors": e1 + e2,
             "recon": reconcile(len(lines), slate, unmatched),
             "n_lines": len(lines), "sig": line_sig(lines), "n_books": len(books), "predictor": predictor,

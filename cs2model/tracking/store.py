@@ -19,6 +19,10 @@ CREATE TABLE IF NOT EXISTS picks (
   stat TEXT, maps TEXT, line REAL, side TEXT, p_model REAL, breakeven REAL, edge REAL, ev REAL,
   tier TEXT, model_mean REAL, start_time TEXT, closing_line REAL, actual REAL, outcome TEXT,
   UNIQUE(source, player, stat, maps, start_time, side, line));
+CREATE TABLE IF NOT EXISTS preds (
+  source TEXT, player TEXT, team TEXT, opponent TEXT, stat TEXT, maps TEXT, start_time TEXT, ts TEXT,
+  line REAL, model_mean REAL, p_over REAL, actual REAL,
+  PRIMARY KEY(source, player, stat, maps, start_time));
 CREATE TABLE IF NOT EXISTS slips (
   id INTEGER PRIMARY KEY, created TEXT, platform TEXT, play TEXT, legs TEXT, p_all REAL,
   ev REAL, stake REAL, hit_dist TEXT, hits INTEGER, payout REAL, profit REAL);
@@ -47,6 +51,70 @@ def snapshot_lines(lines, con=None):
         (ts, ln.source, ln.player, ln.team, ln.opponent, ln.stat, _maps(ln.maps), ln.line, ln.odds_type,
          ln.start_time.isoformat() if ln.start_time else None) for ln in lines])
     con.commit()
+
+
+def log_preds(slate, con=None):
+    """Keep the latest pre-start model price of every standard line (graded later for the bias check)."""
+    con = con or connect()
+    if slate is None or slate.empty:
+        return
+    now = pd.Timestamp.now(tz="UTC")
+    s = slate[slate.odds_type.eq("standard") & slate.start_time.notna()]
+    rows = []
+    for r in s.itertuples():
+        st = pd.Timestamp(r.start_time)
+        st = st.tz_localize("UTC") if st.tzinfo is None else st
+        if st > now:
+            rows.append((r.source, r.player, r.team, r.opponent, r.stat, _maps(r.maps), st.isoformat(), _now(),
+                         float(r.line), float(r.model_mean), float(r.p_over)))
+    con.executemany("INSERT OR REPLACE INTO preds VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)", rows)
+    con.commit()
+
+
+def _actual(hist, resolve_player, player, team, opponent, stat, maps, start_time):
+    from ..names import team_similarity
+    st = pd.Timestamp(start_time)
+    st = st.tz_localize("UTC") if st.tzinfo is None else st
+    if st > pd.Timestamp.now(tz="UTC"):
+        return None
+    pid = resolve_player(player, team)
+    if pid is None:
+        return None
+    h = hist[(hist.player_id == pid) & (hist.date >= st - pd.Timedelta(hours=3)) & (hist.date <= st + pd.Timedelta(hours=12))]
+    h = h[h.opponent.map(lambda o: team_similarity(o, opponent) >= 0.75)]
+    if h.empty:
+        return None
+    mapnos = [int(x) for x in str(maps).split("+")]
+    if not set(h.map_number).issuperset(m for m in mapnos if m <= 2):
+        return None
+    return float(h[h.map_number.isin(mapnos)][stat].sum())
+
+
+def grade_preds(hist, resolve_player, con=None):
+    con = con or connect()
+    p = pd.read_sql("SELECT rowid AS rid, * FROM preds WHERE actual IS NULL", con)
+    n = 0
+    for r in p.itertuples():
+        a = _actual(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        if a is not None:
+            con.execute("UPDATE preds SET actual=? WHERE rowid=?", (a, int(r.rid)))
+            n += 1
+    con.commit()
+    return n
+
+
+def bias_report(con=None):
+    """Model vs results on every graded line (not just picks): positive model - actual = model runs high."""
+    con = con or connect()
+    p = pd.read_sql("SELECT * FROM preds WHERE actual IS NOT NULL", con)
+    if p.empty:
+        return p
+    p["scope"] = p.maps.map(lambda m: "Map " + m if "+" not in m else "Maps " + m)
+    g = p.groupby(["stat", "scope"])[["model_mean", "actual", "line", "p_over"]]
+    out = g.apply(lambda x: pd.Series({
+        "lines": len(x), "model_minus_actual": (x.model_mean - x.actual).mean(), "line_minus_actual": (x.line - x.actual).mean(),
+        "model_minus_line": (x.model_mean - x.line).mean(), "avg_p_over": x.p_over.mean(), "over_rate": (x.actual > x.line).mean()}))
+    return out.reset_index()
 
 
 def first_line(con, source, player, stat, maps, start_time):
@@ -81,6 +149,7 @@ def grade(hist: pd.DataFrame, resolve_player, con=None, payouts=None):
     picks = pd.read_sql("SELECT * FROM picks WHERE outcome IS NULL AND start_time IS NOT NULL", con)
     hist = hist.copy()
     hist["date"] = pd.to_datetime(hist["date"], utc=True)
+    grade_preds(hist, resolve_player, con)
     n = 0
     for _, p in picks.iterrows():
         st = pd.Timestamp(p.start_time)

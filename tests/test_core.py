@@ -317,3 +317,71 @@ def test_alt_line_mode():
     assert alt_line_mode(ln, {"prizepicks": {"exclude_odds_types": ["demon"]}}) == "exclude"
     assert alt_line_mode(ln, {"prizepicks": {}}) == "exclude"
     assert alt_line_mode(PropLine(**{**ln.__dict__, "odds_type": "standard"}), pp) == "standard"
+
+
+def test_map_pool_helpers():
+    from cs2model.maps import pool as P
+    for bo in (1, 3, 5):
+        assert P.map_p_from_series(P.series_p(0.62, bo), bo) == pytest.approx(0.62, abs=1e-6)
+    w, dd = np.array([0.4, 0.35, 0.25]), np.array([0.6, -0.2, 0.1])
+    p = P.anchored(0.57, dd, w)
+    assert np.dot(w, p) == pytest.approx(0.57) and p[0] > p[2] > p[1]   # re-centred on the base price
+    assert np.allclose(P.anchored(0.57, np.zeros(3), w), 0.57)
+    r = {"pool": ["a", "b", "c"], "s1": np.array([.6, .4, 0]), "s2": np.array([.5, .5, 0]), "R1": np.zeros(3),
+         "N1": np.zeros(3), "R2": np.zeros(3), "N2": np.zeros(3), "f1": np.array([.6, .4, 0]), "f2": np.array([.5, .5, 0])}
+    wt = P.pick_weights(r, [1.0, 0, 0, 0], 16.0)
+    assert wt.sum() == pytest.approx(1) and wt[2] < wt[1] < wt[0]  # a map neither team plays is rarely picked
+    assert P.p_played12(wt, 3).sum() == pytest.approx(2)
+
+
+def test_map_state_is_leak_free():
+    from cs2model.maps import pool as P
+    rows = []
+    for i, (d, mp, w) in enumerate([("2026-07-01", "de_nuke", 1), ("2026-07-02", "de_mirage", 0), ("2026-07-03", "de_nuke", 1)]):
+        for tid, opp, won in ((1, 2, w), (2, 1, 1 - w)):
+            rows.append({"date": d, "match_id": i, "game_id": i, "map_number": 1, "map_name": mp, "bo_type": 1,
+                         "team_id": tid, "opp_id": opp, "won": won, "team_odds": np.nan, "opp_odds": np.nan})
+    st = P.MapState(pd.DataFrame(rows), 30.0)
+    r0, r2 = st.records[0], st.records[2]
+    assert r0["N1"].sum() == 0 and r0["p_elo"] == 0.5          # first match sees no history
+    assert r2["f1"][r2["pool"].index("de_nuke")] == pytest.approx(0.5)  # third sees exactly the two before it
+    fast = P.MapState(pd.DataFrame(rows), 30.0, records=False)
+    assert fast.elo == st.elo
+
+
+def test_per_map_win_probs_analytic_matches_monte_carlo():
+    from cs2model.inference import analytic as A, distribution as D
+    from cs2model.inference.simulate import leg_totals, simulate_match
+    spec = _toy_spec()
+    base = A.leg_pmf(spec.players[0], spec, "kills", (1, 2, 3))
+    flat = dataclasses_replace(spec, p_win_map={j: [spec.p_map_team1[j]] * 7 for j in (1, 2, 3)})
+    assert np.allclose(A.leg_pmf(flat.players[0], flat, "kills", (1, 2, 3)), base)  # constant per-map = old behaviour
+    pw = {j: list(np.linspace(0.3, 0.8, 7)) for j in (1, 2, 3)}
+    spec = dataclasses_replace(spec, p_win_map=pw)
+    sim = simulate_match(spec, 200000, np.random.default_rng(3))
+    assert sim["_played"][:, 2].mean() == pytest.approx(A.p_map3(spec), abs=0.005)
+    for stat, mp in (("kills", (1, 2)), ("kills", (1, 2, 3)), ("headshots", (3,))):
+        tot = leg_totals(sim, "p1", stat, mp)
+        pmf = A.leg_pmf(spec.players[1], spec, stat, mp)
+        assert abs(tot.mean() - D.mean(pmf)) < 0.1
+        line = np.floor(tot.mean()) + 0.5
+        assert abs((tot > line).mean() - D.p_over(pmf, line)) < 0.006
+
+
+def dataclasses_replace(obj, **kw):
+    import dataclasses
+    return dataclasses.replace(obj, **kw)
+
+
+def test_preds_log_grade_and_bias_report(tmp_path):
+    from cs2model.tracking import store
+    con = store.connect(tmp_path / "t.db")
+    st = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=1)
+    slate = pd.DataFrame([{"source": "underdog", "player": "x", "team": "A", "opponent": "B", "stat": "kills", "maps": [1, 2],
+                           "start_time": st, "odds_type": "standard", "line": 30.5, "model_mean": 33.0, "p_over": 0.6}])
+    store.log_preds(slate, con)
+    store.log_preds(slate.assign(line=31.5), con)  # re-pricing keeps only the latest pre-start price
+    assert con.execute("SELECT count(*), max(line) FROM preds").fetchone() == (1, 31.5)
+    con.execute("UPDATE preds SET actual=29")
+    br = store.bias_report(con)
+    assert br.loc[0, "scope"] == "Maps 1+2" and br.loc[0, "model_minus_actual"] == pytest.approx(4.0)

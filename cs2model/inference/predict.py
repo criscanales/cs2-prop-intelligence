@@ -18,10 +18,11 @@ import numpy as np
 import pandas as pd
 
 from ..features.build import FEATURES, build_features
+from ..maps.pool import MapModel, anchored
 from ..names import norm_player, team_similarity
 from ..parlay.engine import load_yaml, single_breakeven
 from ..scraper.bo3_history import HIST_PATH
-from ..training.train import MODEL_DIR
+from ..training.train import MODEL_DIR, shrunk_rate
 from . import analytic as A
 from . import distribution as D
 from .simulate import MatchSpec, PlayerSpec, leg_totals, simulate_match
@@ -68,6 +69,8 @@ class Predictor:
         share = recent.map_name.value_counts(normalize=True)
         self.active_maps = sorted(share[share >= ACTIVE_MAP_MIN_SHARE].index)
         self.team_games = tt
+        mm = self.m.art.get("map_model")
+        self.map_model = MapModel(self.hist, mm) if mm else None
         top = tt[tt.tier.isin(self.settings["tiers"])]
         self.team_counts = top.team_id.value_counts()
         self._feat_hist = None
@@ -116,6 +119,9 @@ class Predictor:
 
     # ---------- match context
     def map_weights(self, t1, t2):
+        if self.map_model is not None and self.map_model.p["use_picks"]:
+            return self.map_model.weights(t1, t2, self.active_maps)
+
         def freq(t):
             g = self.team_games[(self.team_games.team_id == t)]
             vc = g.map_name.value_counts()
@@ -223,6 +229,9 @@ class Predictor:
         X = self._map_overrides(F, maps)
         X["kpr_hat"] = np.exp(self.m.kills.predict(X[FEATURES], raw_score=True, num_threads=self.lgb_threads))
         X["hs_hat"] = np.clip(np.exp(self.m.hs.predict(X[FEATURES], raw_score=True, num_threads=self.lgb_threads)), 0.05, 0.95)
+        sh = self.m.art.get("shrink", {})
+        X["kpr_hat"] = shrunk_rate(X.kpr_hat.values, X.kpr_shrunk.values, sh.get("kills", 1.0))
+        X["hs_hat"] = np.clip(shrunk_rate(X.hs_hat.values, X.hs_pct_shrunk.values, sh.get("headshots", 1.0)), 0.05, 0.95)
         rounds = {}
         for j in range(1, min(best_of, 3) + 1):
             pj = p_map.get(j, p_map.get(1, 0.5))
@@ -234,7 +243,12 @@ class Predictor:
             sub = X[X.player_id == pid]
             pspecs.append(PlayerSpec(str(pid), 1 if tid == a else 2, dict(zip(sub.map_name, sub.kpr_hat)),
                                      dict(zip(sub.map_name, sub.hs_hat)), self.m.art["alpha"], self.m.art["rho"]))
-        spec = MatchSpec(job["key"], best_of, maps, list(w), p_map, rounds, self.m.art["win_ratio"], pspecs)
+        p_win_map = {}
+        if self.map_model is not None and self.map_model.p["use_wins"]:
+            dd = self.map_model.strength_diff(a, b, maps)
+            for j in range(1, min(best_of, 3) + 1):  # per-map shifts, re-centred on this slot's market/Elo price
+                p_win_map[j] = [float(x) for x in anchored(p_map.get(j, 0.5), dd, A.slot_marginal(w, j))]
+        spec = MatchSpec(job["key"], best_of, maps, list(w), p_map, rounds, self.m.art["win_ratio"], pspecs, p_win_map)
         t1 = time.perf_counter()
         by_key, cache = {ps.key: ps for ps in pspecs}, {}
         pmfs = {(pk, stat, mp): A.leg_pmf(by_key[pk], spec, stat, mp, cache) for pk, stat, mp in job["legs"]}
@@ -331,8 +345,10 @@ class Predictor:
             if skip:
                 unmatched.append(skip_record(ln, skip))
                 continue
-            low = [n for n, t in ((ln.team, t1), (ln.opponent, t2))
-                   if self.team_counts.get(t, 0) < self.settings["min_team_maps"]]
+            thr = self.settings["min_team_maps"]
+            if ln.odds_type == "demon" and self.settings.get("demon_lower_tier", False):
+                thr = min(thr, int(self.settings.get("demon_min_team_maps", 4)))
+            low = [n for n, t in ((ln.team, t1), (ln.opponent, t2)) if self.team_counts.get(t, 0) < thr]
             if low:
                 unmatched.append(skip_record(ln, f"not enough tier-1/2 maps: {', '.join(low)}"))
                 continue
@@ -385,6 +401,7 @@ class Predictor:
                     "opponent": ln.opponent, "match": spec.key, "start_time": ln.start_time, "stat": ln.stat,
                     "maps": ln.maps, "maps_label": (f"Map {ln.maps[0]}" if len(ln.maps) == 1 else "Maps " + "+".join(map(str, ln.maps))), "line": ln.line,
                     "odds_type": ln.odds_type, "model_mean": float(k @ pmf),
+                    "team_maps": int(min(self.team_counts.get(a, 0), self.team_counts.get(c["b"], 0))),
                     "q10": float(np.searchsorted(cdf, 0.1)), "q90": float(np.searchsorted(cdf, 0.9)),
                     "p_over": p_over, "p_under": p_under, "p_over_raw": p_over_raw, "side": side,
                     "p_push": p_push, "p_side": c_over if side == "over" else c_under, "breakeven": be_over if side == "over" else be_under,
@@ -576,6 +593,9 @@ def apply_rules(s: pd.DataFrame, st, con=None) -> pd.DataFrame:
             tiers.append("B")
         else:
             tiers.append("C")
+        lower_tier = r.get("team_maps", 10**6) < st.get("min_team_maps", 0)  # only demons get here (opt-in setting)
+        if lower_tier and tiers[-1] in ("A", "B"):
+            tiers[-1] = "C"
         stat_rate = (f"{r.kpr_10:.2f} KPR L10" if r.stat == "kills" else f"{r.hs_pct_10:.0%} HS L10") if r[
             "kpr_10" if r.stat == "kills" else "hs_pct_10"] == r["kpr_10" if r.stat == "kills" else "hs_pct_10"] else "form n/a"
         reasons.append(f"{r.side.upper()} {r.line}: model {r.model_mean:.1f} ({stat_rate}, opp allows {r.opp_dpr:.2f} KPR, "
@@ -585,7 +605,8 @@ def apply_rules(s: pd.DataFrame, st, con=None) -> pd.DataFrame:
         elif r.edge < st["min_edge"]:
             why.append(f"No bet: edge {r.edge:+.1%} < {st['min_edge']:.0%} (mean {r.model_mean:.1f} vs {r.line:g})")
         else:
-            why.append(f"{r.side.upper()} {r.line:g}: mean {r.model_mean:.1f}, {stat_rate}, P {r.p_side:.0%} vs {r.breakeven:.0%} needed")
+            why.append(f"{r.side.upper()} {r.line:g}: mean {r.model_mean:.1f}, {stat_rate}, P {r.p_side:.0%} vs {r.breakeven:.0%} needed"
+                       + (f" · lower-tier team ({r.team_maps} tier-1/2 maps), capped at C" if lower_tier else ""))
     s = s.copy()
     s["flags"], s["tier"], s["reason"], s["why"] = flags, tiers, reasons, why
     s["plus_ev"] = s.tier != "-"

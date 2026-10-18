@@ -27,6 +27,15 @@ class MatchSpec:
     rounds: dict             # map number -> (support, probs)
     win_ratio: float = 1.3
     players: list = field(default_factory=list)
+    p_win_map: dict = field(default_factory=dict)  # map number -> P(team1 wins) per candidate map (optional)
+
+
+def win_vec(spec, j):
+    """P(team1 wins map slot j) for each candidate map."""
+    v = getattr(spec, "p_win_map", None) or {}
+    if j in v:
+        return np.asarray(v[j], float)
+    return np.full(len(spec.maps), spec.p_map_team1.get(j, 0.5))
 
 
 def simulate_match(spec: MatchSpec, n: int, rng: np.random.Generator):
@@ -45,7 +54,7 @@ def simulate_match(spec: MatchSpec, n: int, rng: np.random.Generator):
     for j in range(n_maps):
         sup, pr = spec.rounds.get(j + 1) or spec.rounds[1]
         rounds[:, j] = rng.choice(sup, size=n, p=pr)
-        t1win[:, j] = rng.random(n) < spec.p_map_team1.get(j + 1, 0.5)
+        t1win[:, j] = rng.random(n) < win_vec(spec, j + 1)[picks[:, j]]
     played = np.ones((n, n_maps), bool)
     if spec.best_of == 3 and n_maps == 3:
         played[:, 2] = t1win[:, 0] != t1win[:, 1]
@@ -56,7 +65,7 @@ def simulate_match(spec: MatchSpec, n: int, rng: np.random.Generator):
         kills = np.zeros((n, n_maps))
         hs = np.zeros((n, n_maps))
         for j in range(n_maps):
-            p1 = spec.p_map_team1.get(j + 1, 0.5)
+            p1 = win_vec(spec, j + 1)[picks[:, j]]
             p_side = p1 if ps.side == 1 else 1 - p1
             m_w, m_l = win_multipliers(p_side, spec.win_ratio)
             won = t1win[:, j] if ps.side == 1 else ~t1win[:, j]

@@ -48,6 +48,22 @@ def rate(model, X):
     return np.exp(model.predict(X[FEATURES], raw_score=True))
 
 
+def shrunk_rate(r, ref, lam):
+    """Pull a model rate toward the player's shrunk recent rate: ref + lam * (r - ref)."""
+    r = np.asarray(r, float)
+    ref = np.where(np.isfinite(np.asarray(ref, float)), ref, r)
+    return np.clip(ref + lam * (r - ref), 1e-3, None)
+
+
+def fit_shrink(r, ref, y, expo):
+    """lam minimising Poisson deviance on held-out rows (1 = no change). The raw model over-extends when it
+    moves far from a player's recent average, so this is fit on validation and applied to every prediction."""
+    def nll(lam):
+        mu = shrunk_rate(r, ref, lam) * expo
+        return float((mu - y * np.log(mu)).sum())
+    return float(optimize.minimize_scalar(nll, bounds=(0.0, 1.5), method="bounded").x)
+
+
 def fit_alpha(y, mu):
     def nll(la):
         n = 1 / np.exp(la)
@@ -130,7 +146,15 @@ def train(hist=None):
 
     art = {"features": FEATURES, "rounds_table": rounds_table(feat[feat.split != "test"]),
            "trained_through": str(feat.date.max()), "n_rows": int(len(feat))}
-    kv, hv = rate(kill_model, va), np.clip(rate(hs_model, va), 0.05, 0.95)
+    art["shrink"] = {"kills": fit_shrink(rate(kill_model, va), va.kpr_shrunk.values, va.kills.values, va.rounds.values),
+                     "headshots": fit_shrink(rate(hs_model, vah), vah.hs_pct_shrunk.values, vah.headshots.values, vah.kills.values)}
+
+    def lgbm_rates(df, lam_k=None, lam_h=None):
+        lk = art["shrink"]["kills"] if lam_k is None else lam_k
+        lh = art["shrink"]["headshots"] if lam_h is None else lam_h
+        return (shrunk_rate(rate(kill_model, df), df.kpr_shrunk.values, lk),
+                np.clip(shrunk_rate(rate(hs_model, df), df.hs_pct_shrunk.values, lh), 0.05, 0.95))
+    kv, hv = lgbm_rates(va)
     mu_v = kv * va.rounds.values
     art["alpha"] = fit_alpha(va.kills.values, mu_v)
     art["rho"] = fit_rho(va.headshots.values, va.kills.values, hv)
@@ -144,7 +168,7 @@ def train(hist=None):
 
     def preds(df):
         return {
-            "lgbm": (rate(kill_model, df), np.clip(rate(hs_model, df), 0.05, 0.95), {}),
+            "lgbm": (*lgbm_rates(df), {}),
             "negbin": (np.exp(nb_design(df) @ glm.params).values, df.hs_pct_shrunk.values, {"alpha": nb_alpha, "win_ratio": 1.0}),
             "naive": (df.kpr_10.fillna(df.kpr_shrunk).values, df.hs_pct_10.fillna(df.hs_pct_shrunk).values,
                       {"alpha": 1e-4, "win_ratio": 1.0, "rho": 1e-4}),
@@ -208,8 +232,19 @@ def train(hist=None):
     for stat in ("kills", "headshots"):
         report[f"calibration_{stat}"] = M.calibration_table(rows[f"{stat}_p_over"].values,
                                                             (rows[stat] > rows[f"{stat}_line"]).astype(int).values).to_dict("records")
+    report["shrink"] = {}
+    for stat, i, y, expo in (("kills", 0, te.kills.values, te.rounds.values), ("headshots", 1, te.headshots.values, te.kills.values)):
+        raw, adj = lgbm_rates(te, 1.0, 1.0)[i] * expo, lgbm_rates(te)[i] * expo
+        report["shrink"][stat] = {"lambda": art["shrink"][stat], "test_mae_raw": float(np.abs(raw - y).mean()),
+                                  "test_mae_shrunk": float(np.abs(adj - y).mean()),
+                                  "test_bias_raw": float((raw - y).mean()), "test_bias_shrunk": float((adj - y).mean())}
+    log.info("shrink toward recent form: %s", report["shrink"])
     imp = pd.Series(kill_model.feature_importance("gain"), index=FEATURES).sort_values(ascending=False)
     report["feature_importance_kills"] = (imp / imp.sum()).head(20).round(4).to_dict()
+
+    from ..maps import pool as map_pool
+    art["map_model"], report["map_model"] = map_pool.train(hist)
+    log.info("map model: %s", report["map_model"])
 
     MODEL_DIR.mkdir(exist_ok=True)
     kill_model.save_model(str(MODEL_DIR / "kills_lgbm.txt"))

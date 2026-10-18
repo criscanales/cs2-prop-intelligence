@@ -323,8 +323,13 @@ if not (MODEL_DIR / "kills_lgbm.txt").exists():
 
 # ---------------- background pricing: the page renders immediately, the slate fills in when done
 @st.cache_resource
-def shared_predictor(hist_mtime):
+def shared_predictor(hist_mtime, model_mtime=0):
     return Predictor()
+
+
+def model_mtime():
+    f = MODEL_DIR / "artifacts.json"
+    return f.stat().st_mtime if f.exists() else 0
 
 
 @st.cache_data(ttl=3600)
@@ -361,7 +366,7 @@ def poll():
 
 @st.cache_resource
 def results_updater():
-    return {"running": False, "err": None, "added": None, "t": None}
+    return {"running": False, "err": None, "added": None, "t": None, "training": False}
 
 
 def start_results_update(u):
@@ -378,10 +383,14 @@ def start_results_update(u):
             u["added"] = len(df) - old
             pr = Predictor()
             store.grade(pr.hist, pr.resolve_player)
+            if time.time() - model_mtime() >= float(settings.get("retrain_days", 7)) * 86400:
+                from cs2model.training.train import train
+                u["training"] = True
+                train()
         except Exception as e:  # noqa: BLE001  surfaced in the sidebar
             u["err"] = str(e)
         finally:
-            u.update(running=False, t=time.time())
+            u.update(running=False, training=False, t=time.time())
     threading.Thread(target=work, daemon=True).start()
 
 
@@ -389,21 +398,29 @@ def start_results_update(u):
 def results_watch(on, rmin):
     u = results_updater()
     mt = HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0
+    mm = model_mtime()
     seen = st.session_state.setdefault("hist_seen", mt)
-    if mt != seen and not st.session_state.get("job") and not u["running"]:
-        st.session_state.hist_seen = mt
-        st.toast("New match results loaded. Repricing...")
+    seen_m = st.session_state.setdefault("model_seen", mm)
+    if (mt != seen or mm != seen_m) and not st.session_state.get("job") and not u["running"]:
+        st.session_state.hist_seen, st.session_state.model_seen = mt, mm
+        st.toast("Retrained models loaded. Repricing..." if mm != seen_m else "New match results loaded. Repricing...")
         st.session_state.force_refresh = True
         st.rerun(scope="app")
     if on and not u["running"] and time.time() - max(mt, u["t"] or 0) >= rmin * 60:
         start_results_update(u)
-    if u["running"]:
+    if u["training"]:
+        st.caption("Weekly retrain running in the background…")
+    elif u["running"]:
         st.caption("Pulling new results from bo3.gg…")
     else:
         nxt = max(0, rmin * 60 - (time.time() - max(mt, u["t"] or 0))) / 60
         st.caption(f"Results updated {pd.Timestamp(mt, unit='s', tz='UTC'):%H:%M} UTC"
                    + (f" · {u['added']:+,} rows" if u["added"] is not None else "")
                    + (f" · next pull in {nxt:.0f} min" if on else " · auto-pull off"))
+    if mm:
+        due = max(0.0, float(settings.get("retrain_days", 7)) - (time.time() - mm) / 86400)
+        st.caption(f"Models trained {pd.Timestamp(mm, unit='s', tz='UTC'):%d %b}"
+                   + (f" · retrain in {due:.0f}d" if due >= 1 else " · retrain due with the next results pull" if on else " · retrain due (turn on auto-pull)"))
     if u["err"]:
         st.caption(f"Results pull failed: {u['err']}")
 
@@ -533,12 +550,19 @@ with st.sidebar:
     st.markdown(BRAND, unsafe_allow_html=True)
     st.markdown('<div class="sb-h">Live feed</div>', unsafe_allow_html=True)
     auto = st.toggle("Auto-update on new lines", value=True)
+    low_dem = st.toggle("Include lower-tier demons", value=bool(settings.get("demon_lower_tier", False)),
+                        help=f"Also price PrizePicks demons when a team has {settings.get('demon_min_team_maps', 4)}+ tier-1/2 maps "
+                             f"(normally {settings['min_team_maps']}). These are capped at confidence C.")
+    if st.session_state.setdefault("low_dem", low_dem) != low_dem:
+        st.session_state.low_dem, st.session_state.force_refresh = low_dem, True
     every = max(60, int(settings.get("auto_refresh_sec", 120)))
     forced = st.session_state.pop("force_refresh", False)
     job = st.session_state.get("job")
     clicked = st.button("Refresh lines & odds", type="primary", width="stretch")
     if (clicked or forced or ("res" not in st.session_state and job is None)) and not (job and not job["done"]):
-        st.session_state.job = job = start_pricing(shared_predictor(HIST_PATH.stat().st_mtime))
+        pred = shared_predictor(HIST_PATH.stat().st_mtime, model_mtime())
+        pred.settings["demon_lower_tier"] = low_dem
+        st.session_state.job = job = start_pricing(pred)
     if job is not None and job["done"]:
         st.session_state.job = None
         if job["err"] is not None:
@@ -792,7 +816,10 @@ def player_detail(r, i, scope):
         allm = dict(kills=(w * mp.kills).sum(), headshots=(w * mp.headshots).sum(), kpr=(w * mp.kpr).sum(), maps_n=len(h),
                     avg_k=h.kills.mean(), avg_hs=h.headshots.mean(), kpr_hist=h.kpr.mean(), hs_hist=h.hs_pct.mean())
         st.markdown(map_table(mp, allm, d["spec"].best_of), unsafe_allow_html=True)
-        st.caption(f"Model projections use this match's odds ({r.odds_source}); win prob on map 1 {mp.p_win.dropna().iloc[0]:.0%}. "
+        pw = mp.p_win.dropna()
+        wtxt = (f"map win prob {pw.min():.0%}–{pw.max():.0%} depending on the map" if len(pw) and pw.max() - pw.min() > 0.005
+                else f"map win prob {pw.iloc[0]:.0%} on every map" if len(pw) else "map win prob unavailable")
+        st.caption(f"Model projections use this match's odds ({r.odds_source}); {wtxt}. "
                    "P(played) is per map and is not normalised: a series plays 2-3 maps, so the column sums to the expected map count.")
         map_compare(r, mp, allm, h, scope)
     else:
@@ -1263,3 +1290,36 @@ with tab_model:
                  hide_index=True, width="stretch")
     st.subheader("Top features (kills, gain share)")
     st.bar_chart(pd.Series(bt["feature_importance_kills"]))
+    st.subheader("Does the model run high?")
+    sh = bt.get("shrink")
+    if sh:
+        st.dataframe(pd.DataFrame([{"stat": k, "pull toward recent form": f"{1 - v['lambda']:.0%}",
+                                    "test bias before": v["test_bias_raw"], "test bias after": v["test_bias_shrunk"],
+                                    "test MAE before": v["test_mae_raw"], "test MAE after": v["test_mae_shrunk"]}
+                                   for k, v in sh.items()]).round(3), hide_index=True, width="stretch")
+        st.caption("The raw model over-extends when it projects far from a player's recent average, so every projection is pulled "
+                   "part of the way back toward his shrunk last-20-map rate (fit on validation maps, scored on test maps). Bias = model minus actual per map.")
+    br = store.bias_report(store.connect())
+    if br.empty:
+        st.caption("Real lines: no graded lines yet. Every priced line is logged with its last pre-match projection and graded when results come in.")
+    else:
+        st.caption("Real lines, graded: model minus actual > 0 means the model ran high; line minus actual shows the same for the books.")
+        st.dataframe(br.round(3), hide_index=True, width="stretch")
+    mm = bt.get("map_model")
+    st.subheader("Map pool model (test period)")
+    if not mm:
+        st.caption("Not trained yet: run `python -m cs2model.cli train` to fit and backtest it.")
+    else:
+        art_mm = json.loads((MODEL_DIR / "artifacts.json").read_text()).get("map_model", {})
+        pk, wn = mm["picks"], mm["wins"]
+        st.dataframe(pd.DataFrame([
+            {"part": "Which maps get played", "metric": "log loss of pick order / series", "previous": pk["nll_per_series"]["baseline"],
+             "map pool": pk["nll_per_series"]["map_pool"], "used in pricing": art_mm.get("use_picks", False)},
+            {"part": "Which maps get played", "metric": "Brier, played in maps 1-2", "previous": pk["brier_played_maps12"]["baseline"],
+             "map pool": pk["brier_played_maps12"]["map_pool"], "used in pricing": art_mm.get("use_picks", False)},
+            {"part": "Map winner", "metric": "log loss per map", "previous": wn["logloss"]["same_every_map"],
+             "map pool": wn["logloss"]["per_map"], "used in pricing": art_mm.get("use_wins", False)},
+        ]).round(4), hide_index=True, width="stretch")
+        st.caption(f"{mm['n_series']} series, {wn['maps']} maps, {mm['test_period'][0]} to {mm['test_period'][1]}; fit only on earlier series. "
+                   "Each part is used in pricing only if it beat the previous approach here. \"Previous\" for map winners is one "
+                   "Elo win chance on every map.")

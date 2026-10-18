@@ -151,6 +151,13 @@ the window, which skips one-off and unranked teams.
    - The map winner is drawn from the market (or Elo). Winners get a kill-rate multiplier fit on validation data, normalised so the expected value is unchanged.
    - Kills follow a NegBin with dispersion fit on validation data. HS | kills follow a Beta-Binomial.
    - Map picks are drawn from both teams' recent map pools. Map 3 is played only when maps 1–2 split.
+   - **Map pool model** (`cs2model/maps/pool.py`): map picks come from a Plackett-Luce model on each team's decayed
+     play share and map record (bo3.gg), which beat the old play-frequency blend on held-out series. A per-map win
+     model (map strength vs Elo) is also fit, but it is only used for pricing when it beats one win chance on every map
+     out of sample; currently it doesn't, so it's off. Both results are on the Model tab.
+   - **Shrink toward recent form:** the raw LightGBM rate is pulled part of the way back to the player's shrunk
+     last-20-map rate (fit on validation: about 12% for kills, 44% for HS), because it over-extended when it moved far
+     from a player's average.
    - A 50k-draw joint simulation per match produces P(over/under) for any line, plus quantiles.
 4. **Calibration.** Platt scaling on logit(P) fit on the validation split, separately for kills/HS and single-map/multi-map.
 5. **Baselines.** A negative-binomial GLM (statsmodels, same offset) and a naive last-10 average with a Poisson distribution.
@@ -162,6 +169,8 @@ the window, which skips one-off and unranked teams.
 - **Edge** = model P(side) − breakeven. The breakeven comes from the platform's `single_pick_reference` play in `payouts.yaml`, e.g. 2-Power = 3^(-1/2) ≈ 57.7%, or 1/decimal for Underdog lines that carry their own price.
 - **Thresholds:** min edge 3%, min 15 prior maps.
 - **PrizePicks demon / goblin lines** (over only; `alt_lines` in `payouts.yaml`). The API doesn't publish their payouts.
+- **Lower-tier demons** (sidebar toggle / `demon_lower_tier`): demons are also priced when each team has at least
+  `demon_min_team_maps` tier-1/2 maps (default 4) instead of `min_team_maps`. They're capped at confidence C.
   - Demons are priced at the standard breakeven. Demons pay more than standard, so their edge is a lower bound. Cards show a **Demon** badge.
   - Goblins pay less than standard, so they stay excluded until you enter a per-pick decimal payout for them.
   - Underdog lines with their own price (alt payouts) already use 1/decimal as the breakeven.
@@ -185,6 +194,10 @@ the window, which skips one-off and unranked teams.
 - **Stake.** Full Kelly is solved over the hit distribution, then multiplied by `kelly_fraction` (0.25). Each slip is capped at `max_stake_pct`, and the best slip per play type is scaled to `daily_exposure_pct`.
 
 ## Tracking
+
+Every priced standard line is logged (`preds` table) with its last pre-match projection and graded when results arrive;
+the Model tab's "Does the model run high?" section shows model minus actual on these real lines. While open, the app also
+retrains the models in the background once they are `retrain_days` (7) old, right after an hourly results pull.
 
 Each pick and slip you log is stored in `data/tracking.db`, along with line snapshots. `grade` fills in actual
 results, closing lines (CLV) and slip payouts. The dashboard's Tracking tab shows hit rate, flat ROI, CLV, slip
