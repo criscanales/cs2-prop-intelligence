@@ -18,6 +18,25 @@ streamlit run cs2model/dashboard/app.py  # dashboard at http://localhost:8501
 **Before you trust any EV number,** open `config/payouts.yaml` and enter the payouts your app shows today.
 Then set `verified: true`. The dashboard shows a warning until you do.
 
+## Desktop app (Windows / macOS)
+
+`python -m cs2model.desktop` opens the dashboard in its own native window (pywebview). If no native webview is
+available, it falls back to your browser.
+
+To get a double-click app, build it on the target OS:
+
+```bash
+pip install -r requirements.txt pyinstaller==6.11.1 pywebview==5.3.2
+python desktop/build.py        # Windows -> dist/CS2 Props/CS2 Props.exe, macOS -> dist/CS2 Props.app
+```
+
+Or push the repo to GitHub and run the `desktop-build` workflow (Actions tab). It builds both and uploads zips.
+
+The packaged app keeps its data, models and editable config in `~/CS2Props` (Windows: `C:\Users\<you>\CS2Props`).
+On first launch it offers **Download data and train**. Unsigned builds:
+- **macOS:** right-click the app, choose Open, then Open again.
+- **Windows:** in the SmartScreen prompt, choose More info, then Run anyway.
+
 Other commands:
 
 | command | what it does |

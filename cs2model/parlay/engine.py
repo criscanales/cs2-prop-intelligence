@@ -2,12 +2,13 @@
 correlation-aware selection on a shared Monte Carlo hit matrix, fractional Kelly."""
 from itertools import combinations
 from math import comb
+import os
 from pathlib import Path
 
 import numpy as np
 import yaml
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("CS2_HOME") or Path(__file__).resolve().parents[2])
 
 
 def load_yaml(name):

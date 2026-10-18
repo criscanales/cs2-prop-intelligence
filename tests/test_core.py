@@ -227,3 +227,11 @@ def test_optimizer_one_leg_per_player():
             {"match": "m2", "player": "p2", "stat": "kills"}]
     for r in E.optimize(H, legs, _cfg()["power_2"], top_n=5):
         assert not {0, 1} <= set(r["legs"])
+
+
+def test_push_conditional_side_probability():
+    # whole-number line: P(over | no push) must exceed raw P(over) when pushes are possible
+    tot = np.array([13] * 30 + [14] * 20 + [15] * 50)
+    p_over, p_push = (tot > 14).mean(), (tot == 14).mean()
+    assert p_over == 0.5 and p_push == 0.2
+    assert abs(p_over / (1 - p_push) - 0.625) < 1e-12

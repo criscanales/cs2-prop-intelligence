@@ -12,7 +12,7 @@ from pathlib import Path
 
 import requests
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("CS2_HOME") or Path(__file__).resolve().parents[2])
 CACHE_DIR = Path(os.environ.get("CS2_CACHE_DIR", ROOT / "data" / "cache"))
 USER_AGENT = os.environ.get("CS2_USER_AGENT", "cs2-props-model/0.1 (personal research)")
 

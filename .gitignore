@@ -4,3 +4,5 @@ data/
 models/
 .pytest_cache/
 .ruff_cache/
+build/
+dist/

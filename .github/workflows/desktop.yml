@@ -1,0 +1,28 @@
+name: desktop-build
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - if: runner.os == 'macOS'
+        run: brew install libomp
+      - run: pip install -r requirements.txt pyinstaller==6.11.1 pywebview==5.3.2
+      - run: python desktop/build.py
+      - if: runner.os == 'macOS'
+        run: cd dist && ditto -c -k --keepParent "CS2 Props.app" CS2Props-mac.zip
+      - if: runner.os == 'Windows'
+        run: Compress-Archive -Path "dist/CS2 Props" -DestinationPath dist/CS2Props-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CS2Props-${{ runner.os }}
+          path: dist/*.zip

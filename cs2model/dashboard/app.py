@@ -17,7 +17,7 @@ from cs2model.training.train import MODEL_DIR
 
 st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="🎯")
 st.markdown("""<style>
-.block-container {padding-top: 1.2rem; max-width: 1600px;}
+.block-container {padding-top: 3.5rem; max-width: 1600px;}
 div[data-testid="stMetric"] {background:#141a22;border:1px solid #1f2937;border-radius:10px;padding:10px 14px;}
 div[data-testid="stMetricValue"] {font-size:1.4rem;}
 </style>""", unsafe_allow_html=True)
@@ -25,7 +25,19 @@ div[data-testid="stMetricValue"] {font-size:1.4rem;}
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
 
 if not (MODEL_DIR / "kills_lgbm.txt").exists():
-    st.error("No trained model. Run `python -m cs2model.cli crawl` then `python -m cs2model.cli train`.")
+    st.title("CS2 Props +EV: first-time setup")
+    st.write(f"No trained model yet. This downloads the last {settings['history_days']} days of tier 1-2 bo3.gg map stats "
+             "(about 1-1.5 hours the first time, cached afterwards) and trains the models.")
+    if st.button("Download data and train", type="primary"):
+        from cs2model.scraper.bo3_history import crawl
+        from cs2model.training.train import train
+        with st.status("Setting up...", expanded=True) as stat:
+            st.write("Crawling bo3.gg (progress is logged in the terminal / data folder)...")
+            df = crawl(settings["history_days"], tiers=tuple(settings["tiers"]))
+            st.write(f"{len(df):,} player-map rows. Training...")
+            train(df)
+            stat.update(label="Done", state="complete")
+        st.rerun()
     st.stop()
 
 # ---------------- sidebar
@@ -59,9 +71,8 @@ if slate.empty:
     st.stop()
 
 view = slate[slate.source.isin(platforms) & slate.stat.isin(stats) & slate.tier.isin(tiers)]
-view = view[(view.edge >= min_edge) | ~only_ev]
 if only_ev:
-    view = view[view.plus_ev]
+    view = view[view.plus_ev & (view.edge >= min_edge)]
 if q:
     ql = q.lower()
     view = view[view.player.str.lower().str.contains(ql) | view.team.str.lower().str.contains(ql) |
@@ -131,8 +142,8 @@ with tab_player:
             m[0].metric("Edge", f"{r.edge:+.1%}", r.side)
             m[1].metric("Tier", r.tier)
             st.caption(r.reason)
-            if r.flags:
-                st.warning(r.flags)
+            if r["flags"]:
+                st.warning(r["flags"])
             st.caption(f"80% interval {r.q10:.0f}–{r.q90:.0f} · map win {r.p_map_win:.0%} · OT/map {r.p_ot:.0%} · "
                        f"map 3 {r.p_map3:.0%} · odds: {r.odds_source}")
         h = pred.hist[pred.hist.player_id == r.player_id].sort_values("date", ascending=False)
@@ -192,7 +203,10 @@ with tab_parlay:
         cand = slate[slate.source == plat].sort_values("edge", ascending=False)
         labels = cand.apply(lambda r: f"{r.player} {r.side} {r.line} {r.stat} {r.maps_label} (edge {r.edge:+.1%})", axis=1)
         sel = st.multiselect("Legs (side = model's side)", cand.id.tolist(), format_func=lambda i: labels[i], max_selections=6)
-        if len(sel) >= 2:
+        dup = slate.loc[sel, "player"][slate.loc[sel, "player_id"].duplicated()].tolist()
+        if dup:
+            st.error(f"One pick per player per entry: remove the extra {', '.join(dup)} leg.")
+        elif len(sel) >= 2:
             H = np.column_stack([details[i]["hit"] for i in sel])
             rows = []
             for name, play in avail.items():

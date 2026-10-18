@@ -217,7 +217,10 @@ class Predictor:
                 f = Fi.loc[pid]
                 be_over = single_breakeven(ln.source, ln.over_decimal, self.payouts)
                 be_under = single_breakeven(ln.source, ln.under_decimal, self.payouts)
-                e_over, e_under = p_over - be_over, (p_under - be_under) if not ln.over_only else -1
+                # a push voids the leg on PrizePicks/Underdog, so price each side conditional on no push
+                live = max(1e-9, 1 - p_push)
+                c_over, c_under = min(1.0, p_over / live), min(1.0, p_under / live)
+                e_over, e_under = c_over - be_over, (c_under - be_under) if not ln.over_only else -1
                 side = "over" if e_over >= e_under else "under"
                 row = {
                     "id": len(rows), "source": ln.source, "player": ln.player, "player_id": pid, "team": ln.team,
@@ -226,7 +229,7 @@ class Predictor:
                     "odds_type": ln.odds_type, "model_mean": float(tot.mean()),
                     "q10": float(np.quantile(tot, 0.1)), "q90": float(np.quantile(tot, 0.9)),
                     "p_over": p_over, "p_under": p_under, "p_over_raw": p_over_raw, "side": side,
-                    "p_side": p_over if side == "over" else p_under, "breakeven": be_over if side == "over" else be_under,
+                    "p_push": p_push, "p_side": c_over if side == "over" else c_under, "breakeven": be_over if side == "over" else be_under,
                     "n_maps": int(f.n_maps), "tenure": int(f.tenure), "role_shift": float(f.role_shift) if f.role_shift == f.role_shift else 0.0,
                     "kpr_10": float(f.kpr_10) if f.kpr_10 == f.kpr_10 else np.nan, "hs_pct_10": float(f.hs_pct_10) if f.hs_pct_10 == f.hs_pct_10 else np.nan,
                     "opp_dpr": float(f.opp_dpr) if f.opp_dpr == f.opp_dpr else np.nan,
@@ -238,7 +241,11 @@ class Predictor:
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1
                 rows.append(row)
-                details[row["id"]] = {"totals": tot, "hit": (tot > ln.line) if side == "over" else (tot < ln.line)}
+                hit = (tot > ln.line) if side == "over" else (tot < ln.line)
+                push = tot == ln.line
+                if push.any():  # voided leg ~ resolved at the conditional rate
+                    hit = hit | (push & (rng.random(len(tot)) < row["p_side"]))
+                details[row["id"]] = {"totals": tot, "hit": hit}
         slate = pd.DataFrame(rows)
         if not slate.empty:
             slate = apply_rules(slate, self.settings, con)
