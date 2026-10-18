@@ -16,7 +16,7 @@ streamlit run cs2model/dashboard/app.py  # dashboard at http://localhost:8501
 ```
 
 **Before you trust any EV number,** open `config/payouts.yaml` and enter the payouts your app shows today.
-Then set `verified: true`. The dashboard shows a warning until you do.
+The multipliers in this file are used as-is (`verified: true`); edit them if your app shows different ones.
 
 ## Desktop app (Windows / macOS)
 

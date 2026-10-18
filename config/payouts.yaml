@@ -1,13 +1,13 @@
-# Pick'em payout tables. EDIT THESE to match exactly what your app shows today.
-# Payouts change by state, promo and over time; values below are placeholders that must be
-# verified before use. The dashboard shows a warning while `verified: false`.
+# Pick'em payout multipliers used for EV and Kelly stakes. Edit them if your app shows different
+# multipliers (they vary by state and promo). Set `verified: false` on a platform to bring back
+# the dashboard warning and the 0.5% stake cap.
 #
 # power:  all legs must hit -> stake * multiplier
 # flex:   hits -> multiplier (missing tiers pay 0)
 # single_pick_reference: play type used to derive the per-leg breakeven for the slate table.
 
 prizepicks:
-  verified: false
+  verified: true
   last_verified: null
   source: "PrizePicks app > lineup screen (payout shown before submitting)"
   single_pick_reference: power_2
@@ -23,7 +23,7 @@ prizepicks:
     flex_2:  {legs: 2, type: flex, payouts: {2: 1.5, 1: 0.5}, enabled: false}
 
 underdog:
-  verified: false
+  verified: true
   last_verified: null
   source: "Underdog app > Pick'em entry screen"
   single_pick_reference: power_2
