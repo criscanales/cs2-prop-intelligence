@@ -198,6 +198,41 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .hrc {background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 12px;display:grid;grid-template-columns:auto auto;
   gap:0 12px;font-family:var(--fm);font-size:.75rem;color:var(--tx2);min-width:120px;}
 .hrc b {font-family:var(--fd);letter-spacing:.12em;color:var(--tx);grid-column:1/-1;font-size:.85rem;}
+.ph {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:center;padding:18px 22px;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r);margin:0 0 14px;}
+.ph-id {display:flex;gap:18px;align-items:center;min-width:0;}
+.ph-av .av {width:96px;height:96px;border-radius:10px;object-fit:cover;object-position:50% 12%;font-size:1.6rem;}
+.ph-name {font-family:var(--fd);font-size:2.25rem;font-weight:700;line-height:1;color:var(--tx);letter-spacing:.01em;}
+.ph-team {display:flex;align-items:center;gap:6px;margin-top:10px;font-size:.92rem;color:var(--tx2);flex-wrap:wrap;}
+.ph-team img {width:20px;height:20px;object-fit:contain;} .ph-team b {color:var(--tx);font-weight:600;}
+.ph-team .vs {color:var(--mut);margin:0 6px;font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;}
+.ph-meta {margin-top:8px;font-size:.75rem;color:var(--mut);font-family:var(--fm);}
+.ph-bet {border-left:1px solid var(--line);padding-left:24px;min-width:430px;}
+.ph-k {font-family:var(--fd);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);}
+.ph-line {display:flex;align-items:center;gap:10px;margin:6px 0 12px;}
+.ph-side {font-family:var(--fd);font-weight:700;letter-spacing:.08em;font-size:.82rem;padding:2px 8px;border-radius:4px;border:1px solid var(--line2);}
+.ph-side.over {color:#86efac;border-color:rgba(34,197,94,.4);} .ph-side.under {color:#fca5a5;border-color:rgba(239,68,68,.4);}
+.ph-line .ln {font-family:var(--fm);font-size:2rem;font-weight:700;color:var(--tx);line-height:1;}
+.ph-line .ic svg {width:18px;height:18px;color:var(--tx2);display:block;}
+.ph-line .st {font-family:var(--fd);text-transform:uppercase;letter-spacing:.1em;color:var(--tx2);}
+.ph-line .scope {font-family:var(--fm);font-size:.75rem;padding:2px 9px;border-radius:999px;background:rgba(232,117,42,.1);color:#e8752a;
+  border:1px solid rgba(232,117,42,.35);}
+.ph-nums {display:grid;grid-template-columns:repeat(4,auto);gap:26px;} .ph-nums .v {font-family:var(--fm);font-size:1.15rem;color:var(--tx);margin-top:3px;}
+.ph-nums .v.pos {color:#4ade80;}
+.ss-top {font-size:.8rem;color:var(--tx2);margin:-2px 0 10px;}
+.ssr {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px;}
+.ss {background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;transition:border-color .15s;}
+.ss:hover {border-color:var(--line2);}
+.ss-h {display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
+.ss-h b {font-family:var(--fd);letter-spacing:.14em;font-size:.85rem;color:var(--tx);} .ss-h span {font-family:var(--fm);font-size:.7rem;color:var(--mut);}
+.ss-r {display:grid;grid-template-columns:62px auto 1fr;gap:8px;align-items:baseline;font-family:var(--fm);}
+.ss-r .k {font-size:.7rem;color:var(--mut);font-family:Inter,sans-serif;} .ss-r .v {font-size:1.05rem;color:var(--tx);}
+.ss-r .f {font-size:.72rem;color:var(--tx2);text-align:right;} .ss-r .f.pos {color:#4ade80;} .ss-r .f.neg {color:#a3acb9;}
+.ss-na {font-size:.78rem;color:var(--mut);padding:6px 0;}
+.lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:4px 0 -6px;}
+.lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
+.lg i.dash {width:18px;height:0;border-top:2px dashed #e8752a;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
+@media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -452,48 +487,94 @@ def nice_map(m):
     return m.replace("de_", "").title() if isinstance(m, str) else m
 
 
-def series_chart(r, h):
+def profile_header(r):
+    over = r.side == "over"
+    return (f'<div class="ph"><div class="ph-id"><div class="ph-av">{avatar(getattr(r, "player_id", None), r.player)}</div><div>'
+            f'<div class="ph-name">{html.escape(r.player)}</div>'
+            f'<div class="ph-team">{logo(r.team_id)}<b>{html.escape(r.team)}</b><span class="vs">vs</span>{logo(r.opp_id)}{html.escape(r.opponent)}</div>'
+            f'<div class="ph-meta">{html.escape(str(r.source).title())} · Conf {r.tier} · {int(r.n_maps)} prior maps</div></div></div>'
+            f'<div class="ph-bet"><div class="ph-k">Selected prop</div><div class="ph-line">'
+            f'<span class="ph-side {"over" if over else "under"}">{"▲ OVER" if over else "▼ UNDER"}</span>'
+            f'<span class="ln">{r.line:g}</span><span class="ic">{ICON.get(r.stat, "")}</span><span class="st">{r.stat}</span>'
+            f'<span class="scope">{r.maps_label}</span></div><div class="ph-nums">'
+            f'<div><div class="ph-k">Model P({r.side})</div><div class="v">{r.p_side:.1%}</div></div>'
+            f'<div><div class="ph-k">Breakeven</div><div class="v">{r.breakeven:.1%}</div></div>'
+            f'<div><div class="ph-k">Edge</div><div class="v {"pos" if r.edge > 0 else ""}">{r.edge:+.1%}</div></div>'
+            f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div></div></div>')
+
+
+SHADE = {True: ("#15803d", "#4ade80", "#bbf7d0"), False: ("#475569", "#94a3b8", "#cbd5e1")}
+
+
+def series_chart(r, h, scope):
     maps = [m for m in r.maps if m <= 3] or list(r.maps)
+    over_side = r.side == "over"
     g = h[h.map_number.isin(maps)]
     piv = g.pivot_table(index="match_id", columns="map_number", values=r.stat, aggfunc="sum")
-    if not all(m in piv.columns for m in maps) or piv.dropna(subset=maps).empty:
-        st.caption("No recent series with these maps.")
-        return
-    piv = piv.dropna(subset=maps).join(g.groupby("match_id").agg(date=("date", "max"), opp=("opponent", "first"))).sort_values("date")
-    piv["total"] = piv[maps].sum(1)
+    piv = piv.dropna(subset=maps) if all(m in piv.columns for m in maps) else piv.iloc[0:0]
+    if len(piv):
+        piv = piv.join(g.groupby("match_id").agg(date=("date", "max"), opp=("opponent", "first"))).sort_values("date")
+        piv["total"] = piv[maps].sum(1)
 
-    def chip(lbl, d):
-        if not len(d):
-            return f'<div class="hrc"><b>{lbl}</b><span>no maps</span></div>'
-        return (f'<div class="hrc" title="{len(d)} series"><b>{lbl}</b><span>Over {(d.total > r.line).mean():.0%}</span>'
-                f'<span>Avg {d.total.mean():.1f}</span></div>')
-    chips = chip("L5", piv.tail(5)) + chip("L10", piv.tail(10)) + chip("L15", piv.tail(15)) + chip("H2H", piv[piv.opp == r.opponent])
-    st.markdown(f'<div class="sect">{r.stat.title()} · {r.maps_label} · recent series vs line {r.line:g}</div>'
-                f'<div class="hrs">{chips}</div>', unsafe_allow_html=True)
-    v = piv.tail(12)
-    x = [f"{pd.Timestamp(d):%m/%d}<br>{html.escape(str(o))[:12]}" for d, o in zip(v.date, v.opp)]
+    def cell(lbl, d, empty="No series in the last 3 months"):
+        n = len(d)
+        if n == 0:
+            return f'<div class="ss"><div class="ss-h"><b>{lbl}</b><span>n=0</span></div><div class="ss-na">{empty}</div></div>'
+        hit = (d.total > r.line) if over_side else (d.total < r.line)
+        push, avg = int((d.total == r.line).sum()), d.total.mean()
+        diff = avg - r.line
+        tags = (" · small sample" if n < 3 else "") + (f" · {push} push" if push else "")
+        return (f'<div class="ss"><div class="ss-h"><b>{lbl}</b><span>n={n}{tags}</span></div>'
+                f'<div class="ss-r"><span class="k">{"Over" if over_side else "Under"} hit</span><span class="v">{hit.mean():.0%}</span>'
+                f'<span class="f">{int(hit.sum())}/{n}</span></div>'
+                f'<div class="ss-r"><span class="k">Avg</span><span class="v">{avg:.1f}</span>'
+                f'<span class="f {"pos" if (diff > 0) == over_side and diff != 0 else "neg"}">{diff:+.1f} vs line</span></div></div>')
+    h2h = piv[piv.opp == r.opponent] if len(piv) else piv
+    st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
+                f'<div class="ss-top">Hit rates are for the selected side: <span class="ph-side {"over" if over_side else "under"}">'
+                f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}</span> · counted on series where all of {r.maps_label} was played</div>'
+                f'<div class="ssr">{cell("L5", piv.tail(5))}{cell("L10", piv.tail(10))}{cell("L15", piv.tail(15))}'
+                f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 3 months")}</div>', unsafe_allow_html=True)
+    if piv.empty:
+        st.info(f"No recent series with {r.maps_label} played; nothing to chart.")
+        return
+    win = st.segmented_control("Window", ["L5", "L10", "L15", "All"], default="L10", key=f"win_{scope}_{r.name}",
+                               label_visibility="collapsed") or "L10"
+    v = piv.tail({"L5": 5, "L10": 10, "L15": 15}.get(win, len(piv)))
     over = (v.total > r.line).values
+    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}" for d, o in zip(v.date, v.opp)]
+    res = np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH"))
+    cd = np.column_stack([[f"{pd.Timestamp(d):%b %d}" for d in v.date], v.opp.astype(str)] + [v[m].astype(int) for m in maps]
+                         + [v.total.astype(int), res])
+    ht = ("<b>%{customdata[0]} · vs %{customdata[1]}</b><br>" + "".join(f"Map {m}: %{{customdata[{2 + k}]}}<br>" for k, m in enumerate(maps))
+          + f"Series total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line {r.line:g} → %{{customdata[{3 + len(maps)}]}}<extra></extra>")
     fig = go.Figure()
     for k, m in enumerate(maps):
-        cols = [("#15803d", "#22c55e", "#4ade80")[k] if o else ("#7f1d1d", "#b91c1c", "#dc2626")[k] for o in over]
-        fig.add_bar(x=x, y=v[m], marker_color=cols, marker_line_width=0, text=[f"{int(val)}<br>M{m}" for val in v[m]],
-                    textposition="inside", insidetextanchor="middle", textfont=dict(color="#f8fafc", size=12, family="JetBrains Mono"),
-                    hovertemplate=f"Map {m}: %{{y}}<extra></extra>")
-    if len(maps) > 1:
-        fig.add_scatter(x=x, y=v.total, mode="text", text=[f"{int(t)}" for t in v.total], textposition="top center",
-                        textfont=dict(color="#eef1f5", size=13, family="JetBrains Mono"), showlegend=False, hoverinfo="skip")
-    fig.add_hline(y=r.line, line_dash="dash", line_color="#e5e7eb", annotation_text=f"line {r.line:g}", annotation_position="top left")
-    fig.update_layout(barmode="stack", template="plotly_dark", height=400, margin=dict(l=10, r=10, t=24, b=10), showlegend=False,
-                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", bargap=0.18, uniformtext=dict(minsize=10, mode="hide"),
-                      yaxis=dict(gridcolor="#1d2530", range=[0, max(v.total.max(), r.line) * 1.15]))
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{r.name}_{st.session_state.get('board_open')}")
-    st.caption("Bottom segment = Map 1, next = Map 2 (Map 3 on top when included). Green = series went over the line, red = under.")
+        fig.add_bar(x=labels, y=v[m], name=f"Map {m}", marker=dict(color=[SHADE[bool(o)][k] for o in over], line=dict(color="#0a0d12", width=1.5)),
+                    customdata=cd, hovertemplate=ht)
+    fig.add_scatter(x=labels, y=v.total, mode="text", text=[f"{'▲' if o else '▼'} {int(t)}" for o, t in zip(over, v.total)],
+                    textposition="top center", textfont=dict(color=["#86efac" if o else "#cbd5e1" for o in over], size=13, family="JetBrains Mono"),
+                    hoverinfo="skip", showlegend=False)
+    fig.add_hline(y=r.line, line_dash="dash", line_color="#e8752a", line_width=1.5)
+    fig.add_annotation(xref="paper", x=1.0, xanchor="left", y=r.line, text=f" {r.line:g}", showarrow=False,
+                       font=dict(color="#e8752a", size=12, family="JetBrains Mono"))
+    fig.update_layout(barmode="stack", template="plotly_dark", height=360, margin=dict(l=8, r=44, t=28, b=8), showlegend=False,
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", bargap=0.5 if len(v) < 6 else 0.3,
+                      hoverlabel=dict(bgcolor="#11161d", bordercolor="#2e3846", font=dict(family="Inter", size=12, color="#eef1f5")),
+                      xaxis=dict(type="category", tickfont=dict(size=11, color="#a3acb9")),
+                      yaxis=dict(gridcolor="#1d2530", zeroline=False, title=dict(text=r.stat, font=dict(size=11, color="#6b7684")),
+                                 range=[0, max(v.total.max(), r.line) * 1.18]))
+    sw = "".join(f'<span><i style="background:{SHADE[True][k]}"></i><i style="background:{SHADE[False][k]}"></i>Map {m}</span>'
+                 for k, m in enumerate(maps))
+    st.markdown(f'<div class="lg">{sw}<span>▲ green = over</span><span>▼ gray = under</span><span><i class="dash"></i>Line {r.line:g}</span>'
+                f'<span class="mut">Hover a bar for map values</span></div>', unsafe_allow_html=True)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
 
 
-def player_detail(r, i):
+def player_detail(r, i, scope):
     h = pred.hist[pred.hist.player_id == r.player_id].sort_values(["date", "map_number"], ascending=False)
     h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
-    series_chart(r, h)
+    series_chart(r, h, scope)
     d = details.get(i, {})
     st.markdown(f'<div class="sect">Map predictions · vs {html.escape(r.opponent)}</div>', unsafe_allow_html=True)
     if "spec" in d:
@@ -515,11 +596,11 @@ def player_detail(r, i):
                      hide_index=True, width="stretch", column_config={
                          "map": "Map", "p_played": st.column_config.ProgressColumn("P(played)", format="%.0f%%", min_value=0, max_value=100,
                                                                                     help="Chance this map is played in the series (map-pick model + P(map 3))"),
-                         "kills": N("Pred kills", format="%.1f", help="Model expected kills on this map if it is played"),
-                         "headshots": N("Pred HS", format="%.1f", help="Model expected headshots on this map if it is played"),
-                         "kpr": N("Model KPR", format="%.2f"), "maps_n": N("Maps played", format="%d", help="Last 3 months, tier 1-2"),
-                         "avg_k": N("Avg kills", format="%.1f"), "avg_hs": N("Avg HS", format="%.1f"),
-                         "kpr_hist": N("KPR", format="%.2f"), "hs_hist": N("HS %", format="%.0f%%")})
+                         "kills": st.column_config.Column("Pred kills", help="Model expected kills on this map if it is played"),
+                         "headshots": st.column_config.Column("Pred HS", help="Model expected headshots on this map if it is played"),
+                         "kpr": st.column_config.Column("Model KPR"), "maps_n": st.column_config.Column("Maps played", help="Last 3 months, tier 1-2"),
+                         "avg_k": st.column_config.Column("Avg kills"), "avg_hs": st.column_config.Column("Avg HS"),
+                         "kpr_hist": st.column_config.Column("KPR"), "hs_hist": st.column_config.Column("HS %")})
         st.caption(f"Predictions use this match's odds ({r.odds_source}); win prob on map 1 {mp.p_win.dropna().iloc[0]:.0%}. "
                    "Right-hand columns are the player's actual averages on each map and across all maps.")
     else:
@@ -544,11 +625,8 @@ def player_detail(r, i):
 @st.dialog("Player panel", width="large")
 def player_dialog(i):
     r = slate.loc[i]
-    st.markdown(f'<div class="phead">{avatar(getattr(r, "player_id", None), r.player)}<div><div class="pl">{html.escape(r.player)}</div>'
-                f'<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · '
-                f'{r.stat} {r.maps_label} · line {r.line:g} · {r.side} · edge {r.edge:+.1%} · mean {r.model_mean:.1f}</div></div></div>',
-                unsafe_allow_html=True)
-    player_detail(r, i)
+    st.markdown(profile_header(r), unsafe_allow_html=True)
+    player_detail(r, i, "dlg")
 
 
 tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Player", "Parlays", "Tracking", "Model"])
@@ -632,9 +710,7 @@ with tab_player:
         pick = st.selectbox("Line", opts.index, format_func=lambda i: opts[i])
         r = slate.loc[pick]
         pmf = details[pick]["pmf"]
-        st.markdown(f'<div class="phead">{avatar(getattr(r, "player_id", None), r.player)}<div><div class="pl">{html.escape(r.player)}</div>'
-                    f'<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · '
-                    f'{r.stat} {r.maps_label} · line {r.line:g}</div></div></div>', unsafe_allow_html=True)
+        st.markdown(profile_header(r), unsafe_allow_html=True)
         a, b = st.columns([3, 2])
         with a:
             vals = np.flatnonzero(pmf > 5e-4)
@@ -657,7 +733,7 @@ with tab_player:
                 st.warning(r["flags"])
             st.caption(f"80% interval {r.q10:.0f}–{r.q90:.0f} · map win {r.p_map_win:.0%} · OT/map {r.p_ot:.0%} · "
                        f"map 3 {r.p_map3:.0%} · odds: {r.odds_source}")
-        player_detail(r, pick)
+        player_detail(r, pick, "tab")
 
 # ---------------- parlays
 def leg_cards(ids):

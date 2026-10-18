@@ -6,3 +6,22 @@ models/
 .ruff_cache/
 build/
 dist/
+# local data, caches and generated output
+*.db
+*.sqlite
+*.sqlite3
+*.log
+exports/
+.cache/
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.DS_Store
+# secrets / credentials
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.pem
+*.key
