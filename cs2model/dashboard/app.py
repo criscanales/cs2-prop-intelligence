@@ -95,7 +95,7 @@ with st.sidebar:
             st.rerun(scope="app")
         st.caption(f"Checked {pd.Timestamp.now(tz='UTC'):%H:%M:%S} UTC · next check in {every // 60} min")
     watch()
-    st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} priced matches")
+    st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} matches with odds")
     for e in res["errors"]:
         st.warning(f"Source unavailable: {e}")
     unverified = [p for p, c in payouts.items() if not c.get("verified")]
@@ -106,7 +106,7 @@ with st.sidebar:
     stats = st.multiselect("Stat", ["kills", "headshots"], ["kills", "headshots"])
     min_edge = st.slider("Min edge", 0.0, 0.15, float(settings["min_edge"]), 0.005, format="%.3f")
     only_ev = st.toggle("Only +EV (passes all rules)", value=False)
-    tiers = st.multiselect("Tier", ["A", "B", "C", "-"], ["A", "B", "C", "-"])
+    tiers = st.multiselect("Confidence tier", ["A", "B", "C", "-"], ["A", "B", "C", "-"])
     q = st.text_input("Search player / team")
     st.subheader("Bankroll")
     settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings["bankroll"]), 50.0)
@@ -155,7 +155,7 @@ with tab_slate:
     c = st.columns(5)
     c[0].metric("Lines priced", len(slate))
     c[1].metric("+EV picks", len(ev))
-    c[2].metric("Tier A", int((ev.tier == "A").sum()))
+    c[2].metric("Confidence A", int((ev.tier == "A").sum()))
     c[3].metric("Best edge", f"{ev.edge.max():.1%}" if len(ev) else "–")
     c[4].metric("Unmatched lines", len(res["unmatched"]))
     top = view[view.plus_ev].sort_values("edge", ascending=False).head(8)
@@ -169,7 +169,7 @@ with tab_slate:
 <div class="mt">{html.escape(r.team)} vs {html.escape(r.opponent)} · {r.maps_label}</div>
 <div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
 <span class="badge b-edge">edge {r.edge:+.1%}</span><span class="badge b-tier">P {r.p_side:.0%} · mean {r.model_mean:.1f}</span>
-{plat}<span class="badge b-tier">tier {r.tier}</span>{new}</div>""")
+{plat}<span class="badge b-tier">conf {r.tier}</span>{new}</div>""")
         st.markdown('<div class="sect">Top +EV plays</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
     st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
     cols = ["chg", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
