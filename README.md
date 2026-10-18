@@ -1,4 +1,49 @@
-# CS2 player kills & headshots model (+EV picks and pick'em slips)
+# CS2 Prop Intelligence
+
+Predicts CS2 player **kills** and **headshots** (single maps and Maps 1+2), prices PrizePicks / Underdog pick'em lines against
+the model, flags +EV picks and evaluates correlated slips. Ships as a Streamlit dashboard and an optional desktop window.
+
+## Features
+- Three months of tier 1-2 (bo3.gg S/A/B) map-level player history, leak-free rolling features
+- LightGBM + negative-binomial kill model, conditional beta-binomial headshot model, Platt calibration on a held-out window
+- Exact analytic single-leg P(over/under); seeded, cached Monte Carlo for correlated multi-leg slips
+- Live lines from PrizePicks and Underdog; match / map / rounds / overtime odds from Pinnacle's guest API and Thunderpick (via bo3.gg)
+- Dashboard: +EV play cards, sortable full board, player panel (series chart, hit rates, map predictions), manual slip builder,
+  pick / result / CLV tracking, CSV / JSON export, auto-refresh when lines change
+- Chronological backtest with Brier, log loss, MAE, pinball loss and calibration tables
+
+## Architecture
+```
+cs2model/
+  scraper/     bo3.gg history crawler, PrizePicks / Underdog lines, Pinnacle / Thunderpick odds
+  features/    rolling player / team / map features (prior maps only)
+  training/    model training, calibration, backtest
+  inference/   predictor, analytic pricing (analytic.py), match simulation (simulate.py)
+  parlay/      slip EV and optimizer
+  tracking/    SQLite store for picks, results, ROI, CLV
+  dashboard/   Streamlit app
+  pipeline.py  end-to-end slate run;  cli.py  command line entry point;  desktop.py  desktop launcher
+config/        settings.yaml (filters, Kelly, simulation), payouts.yaml (pick'em multipliers)
+desktop/       PyInstaller build script;  tests/  unit tests
+```
+Generated data (`data/`: crawl cache, history, tracking DB) and trained models (`models/`) are not committed; rebuild them with the commands below.
+
+## Environment variables
+None are required: every data source used is public and unauthenticated. Configuration lives in `config/*.yaml`.
+Never commit `.env` files or credentials; `.gitignore` excludes them.
+
+## Development
+```bash
+pip install -r requirements.txt
+python -m cs2model.cli crawl      # pull ~3 months of bo3.gg history into data/
+python -m cs2model.cli train      # fit models into models/
+streamlit run cs2model/dashboard/app.py   # dashboard on http://localhost:8501
+python -m cs2model.desktop        # same dashboard in a desktop window
+python -m pytest -q               # unit tests
+ruff check cs2model               # lint
+```
+
+## Original notes
 
 This project predicts a full distribution of CS2 player **kills** and **headshots** (per map, Maps 1+2 and
 Maps 1-3). It compares those predictions with live PrizePicks and Underdog lines and flags picks that are
