@@ -14,6 +14,18 @@ from .tracking import store
 OUT = ROOT / "data" / "out"
 
 
+def line_sig(lines):
+    """Identity of the current board: (source, player, stat, maps, odds_type) -> line."""
+    return {(ln.source, ln.player, ln.stat, tuple(ln.maps), ln.odds_type): ln.line for ln in lines}
+
+
+def diff_sig(old, new):
+    added = [k for k in new if k not in old]
+    moved = [k for k in new if k in old and new[k] != old[k]]
+    removed = [k for k in old if k not in new]
+    return {"added": added, "moved": moved, "removed": removed, "old": old}
+
+
 def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sources=("pinnacle", "thunderpick"),
               n_sims=None, log=True):
     from .inference.predict import Predictor
@@ -25,7 +37,7 @@ def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sour
         store.snapshot_lines(lines, con)
     slate, details, unmatched = predictor.build_slate(lines, books, n_sims=n_sims, con=con)
     return {"slate": slate, "details": details, "unmatched": unmatched, "errors": e1 + e2,
-            "n_lines": len(lines), "n_books": len(books), "predictor": predictor,
+            "n_lines": len(lines), "sig": line_sig(lines), "n_books": len(books), "predictor": predictor,
             "ts": datetime.now(timezone.utc)}
 
 

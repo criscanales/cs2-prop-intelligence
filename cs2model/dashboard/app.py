@@ -1,4 +1,5 @@
 """streamlit run cs2model/dashboard/app.py"""
+import html
 import json
 import sys
 from pathlib import Path
@@ -11,15 +12,40 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from cs2model.parlay import engine as E
-from cs2model.pipeline import build_slips, hit_labels, run_slate, stake_cap
+from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
+from cs2model.scraper.lines import fetch_all_lines
 from cs2model.tracking import store
 from cs2model.training.train import MODEL_DIR
 
 st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="🎯")
 st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+html, body, .stApp, .stMarkdown, button, input {font-family: Inter, system-ui, sans-serif;}
 .block-container {padding-top: 3.5rem; max-width: 1600px;}
-div[data-testid="stMetric"] {background:#141a22;border:1px solid #1f2937;border-radius:10px;padding:10px 14px;}
-div[data-testid="stMetricValue"] {font-size:1.4rem;}
+section[data-testid="stSidebar"] {background:#0d1218; border-right:1px solid #1f2937;}
+div[data-testid="stMetric"] {background:#111827;border:1px solid #1f2937;border-radius:12px;padding:10px 14px;}
+div[data-testid="stMetricValue"] {font-size:1.4rem;font-weight:800;}
+button[data-baseweb="tab"] {font-weight:600;font-size:0.95rem;}
+.hero {background:linear-gradient(120deg,#0f172a 0%,#10261b 55%,#0b0f14 100%);border:1px solid #1f2937;border-radius:16px;
+       padding:18px 24px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;}
+.hero h1 {font-size:1.7rem;margin:0;font-weight:800;letter-spacing:-0.02em;color:#f8fafc;}
+.hero .sub {color:#94a3b8;font-size:0.85rem;margin-top:2px;}
+.live {display:inline-flex;align-items:center;gap:8px;font-size:0.8rem;color:#86efac;background:rgba(34,197,94,.08);
+       border:1px solid rgba(34,197,94,.25);padding:6px 12px;border-radius:999px;}
+.live.off {color:#94a3b8;background:rgba(148,163,184,.08);border-color:#334155;}
+.live .dot {width:8px;height:8px;border-radius:50%;background:#22c55e;animation:pulse 1.8s infinite;}
+.live.off .dot {background:#64748b;animation:none;}
+@keyframes pulse {0%{box-shadow:0 0 0 0 rgba(34,197,94,.6)}70%{box-shadow:0 0 0 9px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+.cards {display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin:4px 0 18px;}
+.card {background:#111827;border:1px solid #1f2937;border-left:4px solid var(--c);border-radius:12px;padding:12px 14px;}
+.card .pl {font-weight:700;font-size:1.05rem;color:#f1f5f9;}
+.card .mt {color:#94a3b8;font-size:0.75rem;margin-top:2px;}
+.card .pk {font-size:1.3rem;font-weight:800;color:var(--c);margin:8px 0 6px;}
+.badge {display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.7rem;font-weight:700;margin:0 4px 2px 0;}
+.b-edge {background:rgba(34,197,94,.15);color:#86efac;} .b-pp {background:rgba(168,85,247,.18);color:#d8b4fe;}
+.b-ud {background:rgba(250,204,21,.14);color:#fde047;} .b-new {background:rgba(59,130,246,.2);color:#93c5fd;}
+.b-tier {background:rgba(148,163,184,.15);color:#cbd5e1;}
+.sect {font-size:0.8rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#64748b;margin:4px 0 6px;}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -42,11 +68,33 @@ if not (MODEL_DIR / "kills_lgbm.txt").exists():
 
 # ---------------- sidebar
 with st.sidebar:
-    st.title("CS2 Props +EV")
-    if st.button("Refresh lines & odds", type="primary", width="stretch") or "res" not in st.session_state:
+    st.markdown("### CS2 Props +EV")
+    auto = st.toggle("Auto-update on new lines", value=True)
+    every = max(60, int(settings.get("auto_refresh_sec", 120)))
+    forced = st.session_state.pop("force_refresh", False)
+    if st.button("Refresh lines & odds", type="primary", width="stretch") or forced or "res" not in st.session_state:
+        prev = st.session_state.get("res")
         with st.spinner("Pulling lines/odds and simulating matches..."):
-            st.session_state.res = run_slate(st.session_state.get("res", {}).get("predictor"))
+            st.session_state.res = run_slate(prev["predictor"] if prev else None)
+        st.session_state.changes = diff_sig(prev["sig"], st.session_state.res["sig"]) if prev else None
     res = st.session_state.res
+
+    @st.fragment(run_every=every if auto else None)
+    def watch():
+        if not auto:
+            return
+        try:
+            lines, _ = fetch_all_lines(("underdog", "prizepicks"))
+        except Exception as e:  # noqa: BLE001  source hiccup: keep the current slate
+            st.caption(f"Line check failed: {e}")
+            return
+        d = diff_sig(st.session_state.res["sig"], line_sig(lines))
+        if d["added"] or d["moved"] or d["removed"]:
+            st.toast(f"Board changed: {len(d['added'])} new · {len(d['moved'])} moved · {len(d['removed'])} pulled. Repricing...")
+            st.session_state.force_refresh = True
+            st.rerun(scope="app")
+        st.caption(f"Checked {pd.Timestamp.now(tz='UTC'):%H:%M:%S} UTC · next check in {every // 60} min")
+    watch()
     st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} priced matches")
     for e in res["errors"]:
         st.warning(f"Source unavailable: {e}")
@@ -78,6 +126,27 @@ if q:
     view = view[view.player.str.lower().str.contains(ql) | view.team.str.lower().str.contains(ql) |
                 view.opponent.str.lower().str.contains(ql)]
 
+ch = st.session_state.get("changes") or {"added": [], "moved": [], "removed": [], "old": {}}
+added, moved = set(ch["added"]), set(ch["moved"])
+
+
+def change_tag(r):
+    k = (r.source, r.player, r.stat, tuple(r.maps), r.odds_type)
+    if k in added:
+        return "NEW"
+    if k in moved:
+        return f"{ch['old'][k]:g}→{r.line:g}"
+    return ""
+
+
+slate["chg"] = slate.apply(change_tag, axis=1) if len(slate) else ""
+view = view.assign(chg=slate.loc[view.index, "chg"])
+live_cls, live_txt = ("live", f"Live · auto-updates every {every // 60} min") if auto else ("live off", "Auto-update off")
+st.markdown(f"""<div class="hero"><div><h1>CS2 Props +EV</h1>
+<div class="sub">Updated {res['ts']:%b %d, %H:%M} UTC · {res['n_lines']} lines on the board · {len(slate)} priced ·
+{len(ch['added'])} new / {len(ch['moved'])} moved / {len(ch['removed'])} pulled since last update</div></div>
+<div class="{live_cls}"><span class="dot"></span>{live_txt}</div></div>""", unsafe_allow_html=True)
+
 tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Player", "Parlays", "Tracking", "Model"])
 
 # ---------------- slate
@@ -89,7 +158,21 @@ with tab_slate:
     c[2].metric("Tier A", int((ev.tier == "A").sum()))
     c[3].metric("Best edge", f"{ev.edge.max():.1%}" if len(ev) else "–")
     c[4].metric("Unmatched lines", len(res["unmatched"]))
-    cols = ["player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
+    top = view[view.plus_ev].sort_values("edge", ascending=False).head(8)
+    if len(top):
+        cards = []
+        for _, r in top.iterrows():
+            col = "#22c55e" if r.side == "over" else "#ef4444"
+            plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
+            new = f'<span class="badge b-new">{html.escape(r.chg)}</span>' if r.chg else ""
+            cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
+<div class="mt">{html.escape(r.team)} vs {html.escape(r.opponent)} · {r.maps_label}</div>
+<div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
+<span class="badge b-edge">edge {r.edge:+.1%}</span><span class="badge b-tier">P {r.p_side:.0%} · mean {r.model_mean:.1f}</span>
+{plat}<span class="badge b-tier">tier {r.tier}</span>{new}</div>""")
+        st.markdown('<div class="sect">Top +EV plays</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+    st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
+    cols = ["chg", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
             "edge", "ev", "tier", "n_maps", "source", "flags", "reason"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
 

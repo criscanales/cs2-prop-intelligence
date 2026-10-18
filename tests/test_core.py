@@ -235,3 +235,11 @@ def test_push_conditional_side_probability():
     p_over, p_push = (tot > 14).mean(), (tot == 14).mean()
     assert p_over == 0.5 and p_push == 0.2
     assert abs(p_over / (1 - p_push) - 0.625) < 1e-12
+
+
+def test_line_board_diff():
+    from cs2model.pipeline import diff_sig
+    old = {("underdog", "a", "kills", (1, 2), "standard"): 30.5, ("underdog", "b", "kills", (1, 2), "standard"): 28.5}
+    new = {("underdog", "a", "kills", (1, 2), "standard"): 31.5, ("prizepicks", "c", "kills", (1,), "standard"): 15.0}
+    d = diff_sig(old, new)
+    assert len(d["added"]) == 1 and len(d["moved"]) == 1 and len(d["removed"]) == 1
