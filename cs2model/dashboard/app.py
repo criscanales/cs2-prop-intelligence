@@ -147,6 +147,8 @@ div[data-testid="stDataFrame"] {border:1px solid var(--line);border-radius:var(-
 .foot {display:flex;flex-wrap:wrap;gap:5px;border-top:1px dashed var(--line);padding-top:9px;}
 .badge {display:inline-block;padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:700;letter-spacing:.04em;margin:0 4px 2px 0;}
 .foot .badge {margin:0;}
+.foot .when {margin-left:auto;align-self:center;min-width:0;overflow:hidden;text-overflow:ellipsis;font-family:var(--fm);font-size:.72rem;color:var(--tx2);white-space:nowrap;}
+.foot .when b {color:var(--tx);font-weight:600;} .foot .when.live b, .ph-meta .live {color:var(--accent);}
 .b-edge {background:var(--pos-soft);color:#86efac;} .b-pp {background:rgba(168,85,247,.16);color:#d8b4fe;}
 .b-ud {background:rgba(250,204,21,.12);color:#fde047;} .b-new {background:var(--steel-soft);color:#bcd3ea;}
 .b-tier {background:rgba(148,163,184,.12);color:#cbd5e1;} .b-A {background:var(--accent);color:#120800;} .b-B {background:var(--accent-soft);color:#ffb37a;}
@@ -466,6 +468,26 @@ ICON = {
 }
 
 
+def start_info(t):
+    """('Today 18:30 UTC', 'in 2h 05m' | 'started' | '') for a match start time; ('', '') when unknown."""
+    t = pd.to_datetime(t, utc=True, errors="coerce")
+    if pd.isna(t):
+        return "", ""
+    now = pd.Timestamp.now(tz="UTC")
+    d = (t.normalize() - now.normalize()).days
+    day = "Today" if d == 0 else "Tomorrow" if d == 1 else "Yesterday" if d == -1 else f"{t:%a %b} {t.day}"
+    m = int((t - now).total_seconds() // 60)
+    rel = "started" if m <= 0 else f"in {m}m" if m < 60 else f"in {m // 60}h {m % 60:02d}m" if m < 24 * 60 else ""
+    return f"{day} {t:%H:%M} UTC", rel
+
+
+def start_meta(r):
+    day, rel = start_info(getattr(r, "start_time", None))
+    if not day:
+        return ""
+    return f'<br>Starts {day}' + (f' · <span class="{"live" if rel == "started" else ""}">{rel}</span>' if rel else "")
+
+
 def play_card(r, help_edge="", help_tier=""):
     over = r.side == "over"
     plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
@@ -474,6 +496,11 @@ def play_card(r, help_edge="", help_tier=""):
     new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
     be = float(min(1.0, max(0.0, r.breakeven)))
     fill = "var(--pos)" if r.p_side > be else "var(--steel)"
+    day, rel = start_info(getattr(r, "start_time", None))
+    short = (day.split()[-2] if day.startswith(("Today", "Tomorrow")) and rel else day.replace(" UTC", "")) if day else ""
+    rel_s = f" · <b>{rel.removeprefix('in ')}</b>" if rel else ""
+    live = " live" if rel == "started" else ""
+    when = f'<span class="when{live}" title="Match start: {day}">{short}{rel_s}</span>' if day else ""
     return f"""<div class="pc"><div class="top">{avatar(getattr(r, "player_id", None), r.player)}<div style="min-width:0">
 <div class="pl">{html.escape(r.player)}</div>
 <div class="mt">{logo(r.team_id)}{html.escape(r.team)} <span style="color:var(--mut)">vs</span> {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div></div>
@@ -486,7 +513,7 @@ def play_card(r, help_edge="", help_tier=""):
 <div class="stats3"><div title="Mean of the model's predictive distribution"><div class="k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div>
 <div title="Model mean minus the line"><div class="k">vs line</div><div class="v">{r.model_mean - r.line:+.1f}</div></div>
 <div title="Prior maps in this player's history"><div class="k">Sample</div><div class="v">{int(r.n_maps)} maps</div></div></div>
-<div class="foot">{plat}<span class="badge b-{tier}" title="{help_tier}">Conf {r.tier}</span>{new}</div></div>"""
+<div class="foot">{plat}<span class="badge b-{tier}" title="{help_tier}">Conf {r.tier}</span>{new}{when}</div></div>"""
 
 
 def logo(team_id):
@@ -645,7 +672,7 @@ def profile_header(r):
     return (f'<div class="ph"><div class="ph-id"><div class="ph-av">{avatar(getattr(r, "player_id", None), r.player)}</div><div>'
             f'<div class="ph-name">{html.escape(r.player)}</div>'
             f'<div class="ph-team">{logo(r.team_id)}<b>{html.escape(r.team)}</b><span class="vs">vs</span>{logo(r.opp_id)}{html.escape(r.opponent)}</div>'
-            f'<div class="ph-meta">{html.escape(str(r.source).title())} · {conf} · {int(r.n_maps)} prior maps</div></div></div>'
+            f'<div class="ph-meta">{html.escape(str(r.source).title())} · {conf} · {int(r.n_maps)} prior maps{start_meta(r)}</div></div></div>'
             f'<div class="ph-bet"><div class="ph-k">Selected prop</div><div class="ph-line">'
             f'<span class="ph-side {"over" if over else "under"}">{"▲ OVER" if over else "▼ UNDER"}</span>'
             f'<span class="ln">{r.line:g}</span><span class="ic">{ICON.get(r.stat, "")}</span><span class="st">{r.stat}</span>'
@@ -963,8 +990,8 @@ with tab_slate:
     st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
     if pricing:
         st.warning("Repricing in progress: showing the previous slate until the new one is ready.")
-    view = view.assign(logo=view.team_id.map(lambda t: LOGOS.get(int(t))))
-    cols = ["chg", "logo", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
+    view = view.assign(logo=view.team_id.map(lambda t: LOGOS.get(int(t))), start=pd.to_datetime(view.start_time, utc=True, errors="coerce"))
+    cols = ["chg", "logo", "player", "team", "opponent", "start", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
             "edge", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
     t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
@@ -984,7 +1011,9 @@ with tab_slate:
                      "chg": st.column_config.Column("Chg", width=70, help="NEW = line added, a→b = line moved since last update"),
                      "logo": st.column_config.ImageColumn("", width=36),
                      "player": st.column_config.Column("Player", width=110), "team": st.column_config.Column("Team", width=140),
-                     "opponent": st.column_config.Column("Opponent", width=140), "maps": st.column_config.Column("Maps", width=80),
+                     "opponent": st.column_config.Column("Opponent", width=140),
+                     "start": st.column_config.DatetimeColumn("Start (UTC)", width=140, format="ddd D MMM, HH:mm", timezone="UTC", help="Match start time (UTC)"),
+                     "maps": st.column_config.Column("Maps", width=80),
                      "stat": st.column_config.Column("Stat", width=85), "line": st.column_config.Column("Line", width=60),
                      "mean": st.column_config.Column("Mean", width=60, help="Mean of the model's predictive distribution"),
                      "p_over": st.column_config.Column("P(over)", width=75), "p_under": st.column_config.Column("P(under)", width=80),
