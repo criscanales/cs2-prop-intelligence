@@ -54,10 +54,42 @@ def _wait(url, timeout=120):
     return False
 
 
+def selftest():
+    """Import every module the app uses and run a tiny model fit; result goes to <home>/selftest.txt (CI build check)."""
+    import importlib
+    import pkgutil
+    import traceback
+    import cs2model
+    ok, lines = True, []
+    mods = ["numpy", "pandas", "scipy.stats", "sklearn.linear_model", "statsmodels.api", "lightgbm", "plotly.graph_objects",
+            "streamlit", "cv2", "PIL.Image", "yaml", "requests", "joblib"]
+    mods += [m.name for m in pkgutil.walk_packages(cs2model.__path__, "cs2model.") if m.name != "cs2model.dashboard.app"]
+    for m in mods:
+        try:
+            importlib.import_module(m)
+        except Exception:  # noqa: BLE001
+            ok = False
+            lines.append(f"FAIL {m}\n{traceback.format_exc()}")
+    try:
+        import lightgbm as lgb
+        import numpy as np
+        x = np.random.default_rng(0).normal(size=(200, 3))
+        lgb.LGBMRegressor(n_estimators=5, verbose=-1).fit(x, x[:, 0]).predict(x)
+    except Exception:  # noqa: BLE001
+        ok = False
+        lines.append(f"FAIL model fit\n{traceback.format_exc()}")
+    lines.append(f"{'OK' if ok else 'FAILED'}: {len(mods)} modules")
+    (HOME / "selftest.txt").write_text("\n".join(lines))
+    print("\n".join(lines))
+    raise SystemExit(0 if ok else 1)
+
+
 def main():
     import multiprocessing
     multiprocessing.freeze_support()  # frozen app: pricing worker processes re-enter here
     _setup_home()
+    if "--selftest" in sys.argv:
+        selftest()
     if "--serve" in sys.argv:
         serve(int(sys.argv[sys.argv.index("--serve") + 1]))
         return

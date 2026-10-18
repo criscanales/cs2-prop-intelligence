@@ -16,8 +16,16 @@ jobs:
           python-version: "3.11"
       - if: runner.os == 'macOS'
         run: brew install libomp
-      - run: pip install -r requirements.txt pyinstaller==6.11.1 pywebview==5.3.2
+      - run: pip install -r requirements.txt pyinstaller==6.22.3 pywebview==5.3.2
       - run: python desktop/build.py
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\CS2 Props\CS2 Props.exe" -ArgumentList "--selftest" -Wait -PassThru
+          Get-Content "$env:USERPROFILE\CS2Props\selftest.txt"
+          exit $p.ExitCode
+      - if: runner.os == 'macOS'
+        run: '"dist/CS2 Props.app/Contents/MacOS/CS2 Props" --selftest'
       - if: runner.os == 'macOS'
         run: cd dist && ditto -c -k --keepParent "CS2 Props.app" CS2Props-mac.zip
       - if: runner.os == 'Windows'
