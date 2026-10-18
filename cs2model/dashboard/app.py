@@ -468,24 +468,27 @@ ICON = {
 }
 
 
+TZ, TZ_LABEL = "America/New_York", "ET"
+
+
 def start_info(t):
-    """('Today 18:30 UTC', 'in 2h 05m' | 'started' | '') for a match start time; ('', '') when unknown."""
+    """('Today', '6:45 AM ET', 'in 2h 05m' | 'started' | '') for a match start time; empty strings when unknown."""
     t = pd.to_datetime(t, utc=True, errors="coerce")
     if pd.isna(t):
-        return "", ""
-    now = pd.Timestamp.now(tz="UTC")
+        return "", "", ""
+    t, now = t.tz_convert(TZ), pd.Timestamp.now(tz=TZ)
     d = (t.normalize() - now.normalize()).days
     day = "Today" if d == 0 else "Tomorrow" if d == 1 else "Yesterday" if d == -1 else f"{t:%a %b} {t.day}"
     m = int((t - now).total_seconds() // 60)
     rel = "started" if m <= 0 else f"in {m}m" if m < 60 else f"in {m // 60}h {m % 60:02d}m" if m < 24 * 60 else ""
-    return f"{day} {t:%H:%M} UTC", rel
+    return day, f"{t.strftime('%I:%M %p').lstrip('0')} {TZ_LABEL}", rel
 
 
 def start_meta(r):
-    day, rel = start_info(getattr(r, "start_time", None))
+    day, clock, rel = start_info(getattr(r, "start_time", None))
     if not day:
         return ""
-    return f'<br>Starts {day}' + (f' · <span class="{"live" if rel == "started" else ""}">{rel}</span>' if rel else "")
+    return f'<br>Starts {day} {clock}' + (f' · <span class="{"live" if rel == "started" else ""}">{rel}</span>' if rel else "")
 
 
 def play_card(r, help_edge="", help_tier=""):
@@ -496,11 +499,11 @@ def play_card(r, help_edge="", help_tier=""):
     new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
     be = float(min(1.0, max(0.0, r.breakeven)))
     fill = "var(--pos)" if r.p_side > be else "var(--steel)"
-    day, rel = start_info(getattr(r, "start_time", None))
-    short = (day.split()[-2] if day.startswith(("Today", "Tomorrow")) and rel else day.replace(" UTC", "")) if day else ""
+    day, clock, rel = start_info(getattr(r, "start_time", None))
+    short = clock if rel and rel != "started" else f"{day} {clock}"
     rel_s = f" · <b>{rel.removeprefix('in ')}</b>" if rel else ""
     live = " live" if rel == "started" else ""
-    when = f'<span class="when{live}" title="Match start: {day}">{short}{rel_s}</span>' if day else ""
+    when = f'<span class="when{live}" title="Match start: {day} {clock}">{short}{rel_s}</span>' if day else ""
     return f"""<div class="pc"><div class="top">{avatar(getattr(r, "player_id", None), r.player)}<div style="min-width:0">
 <div class="pl">{html.escape(r.player)}</div>
 <div class="mt">{logo(r.team_id)}{html.escape(r.team)} <span style="color:var(--mut)">vs</span> {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div></div>
@@ -1012,7 +1015,7 @@ with tab_slate:
                      "logo": st.column_config.ImageColumn("", width=36),
                      "player": st.column_config.Column("Player", width=110), "team": st.column_config.Column("Team", width=140),
                      "opponent": st.column_config.Column("Opponent", width=140),
-                     "start": st.column_config.DatetimeColumn("Start (UTC)", width=140, format="ddd D MMM, HH:mm", timezone="UTC", help="Match start time (UTC)"),
+                     "start": st.column_config.DatetimeColumn("Start (ET)", width=150, format="ddd D MMM, h:mm A", timezone=TZ, help="Match start time, US Eastern (EST/EDT)"),
                      "maps": st.column_config.Column("Maps", width=80),
                      "stat": st.column_config.Column("Stat", width=85), "line": st.column_config.Column("Line", width=60),
                      "mean": st.column_config.Column("Mean", width=60, help="Mean of the model's predictive distribution"),
