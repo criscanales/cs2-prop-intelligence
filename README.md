@@ -158,6 +158,7 @@ the window, which skips one-off and unranked teams.
    - **Shrink toward recent form:** the raw LightGBM rate is pulled part of the way back to the player's shrunk
      last-20-map rate (fit on validation: about 12% for kills, 44% for HS), because it over-extended when it moved far
      from a player's average.
+   - Rolling-window validation of both (by period, tier, format and sample size): [`docs/validation.md`](docs/validation.md).
    - A 50k-draw joint simulation per match produces P(over/under) for any line, plus quantiles.
 4. **Calibration.** Platt scaling on logit(P) fit on the validation split, separately for kills/HS and single-map/multi-map.
 5. **Baselines.** A negative-binomial GLM (statsmodels, same offset) and a naive last-10 average with a Poisson distribution.

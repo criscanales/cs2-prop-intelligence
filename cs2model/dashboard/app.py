@@ -38,7 +38,7 @@ html, body, .stApp, .stMarkdown, button, input, textarea, select {font-family:va
   linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px) 0 0/40px 40px,
   linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px) 0 0/40px 40px,var(--bg);}
 .block-container {padding-top:4.25rem;max-width:1640px;}
-header[data-testid="stHeader"] {background:rgba(10,13,18,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);}
+header[data-testid="stHeader"] {background:var(--bg);border-bottom:1px solid var(--line);}
 h1,h2,h3 {font-family:var(--fd)!important;letter-spacing:.02em;text-transform:uppercase;}
 .logo {width:18px;height:18px;object-fit:contain;vertical-align:-4px;margin:0 4px 0 0;}
 /* sidebar */
@@ -1289,7 +1289,13 @@ with tab_model:
     st.dataframe(pd.DataFrame([dict(target=k, **bk) for k, v in bt["models"]["lgbm"].items() for bk in v["betting"]["buckets"]]),
                  hide_index=True, width="stretch")
     st.subheader("Top features (kills, gain share)")
-    st.bar_chart(pd.Series(bt["feature_importance_kills"]))
+    fi = pd.Series(bt["feature_importance_kills"]).sort_values(ascending=False).head(12).iloc[::-1]
+    fig = go.Figure(go.Bar(x=fi.values, y=fi.index, orientation="h", marker_color="#e8833a",
+                           hovertemplate="%{y}: %{x:.1%}<extra></extra>"))
+    fig.update_layout(template="plotly_dark", height=340, margin=dict(l=10, r=10, t=10, b=10),
+                      xaxis=dict(tickformat=".0%", title=None), yaxis=dict(tickfont=dict(size=13, family="JetBrains Mono")),
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    st.plotly_chart(fig, width="stretch")
     st.subheader("Does the model run high?")
     sh = bt.get("shrink")
     if sh:
