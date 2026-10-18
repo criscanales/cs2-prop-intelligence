@@ -303,3 +303,17 @@ def test_portrait_frame_falls_back_without_face():
     blob = np.zeros((455, 354, 4), np.uint8)
     blob[40:300, 120:240] = 200
     assert frame(blob) == DEFAULT
+
+
+def test_alt_line_mode():
+    from cs2model.inference.predict import alt_line_mode
+    from cs2model.types import PropLine
+    pp = {"prizepicks": {"alt_lines": {"demon": "standard", "goblin": "exclude"}}}
+    ln = PropLine(source="prizepicks", player="x", team="a", opponent="b", stat="kills", maps=(1,), line=14.5,
+                  odds_type="demon", over_only=True)
+    assert alt_line_mode(ln, pp) == "standard"
+    assert alt_line_mode(PropLine(**{**ln.__dict__, "odds_type": "goblin"}), pp) == "exclude"
+    assert alt_line_mode(PropLine(**{**ln.__dict__, "odds_type": "goblin"}), {"prizepicks": {"alt_lines": {"goblin": 1.6}}}) == 1.6
+    assert alt_line_mode(ln, {"prizepicks": {"exclude_odds_types": ["demon"]}}) == "exclude"
+    assert alt_line_mode(ln, {"prizepicks": {}}) == "exclude"
+    assert alt_line_mode(PropLine(**{**ln.__dict__, "odds_type": "standard"}), pp) == "standard"

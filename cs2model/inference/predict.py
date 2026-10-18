@@ -1,5 +1,6 @@
 """Turn today's prop lines + match odds into calibrated over/under probabilities, edges and
 simulated hit indicators (for slips)."""
+import dataclasses
 import hashlib
 import logging
 import os
@@ -311,9 +312,12 @@ class Predictor:
                 unmatched.append(skip_record(ln, "duplicate line on board"))
                 continue
             seen_keys.add(k)
-            if ln.source == "prizepicks" and ln.odds_type in self.payouts["prizepicks"].get("exclude_odds_types", []):
+            alt = alt_line_mode(ln, self.payouts)
+            if alt == "exclude":
                 unmatched.append(skip_record(ln, f"PrizePicks {ln.odds_type} line (alt payout, excluded)"))
                 continue
+            if isinstance(alt, float):
+                ln = dataclasses.replace(ln, over_decimal=alt)
             t1, t2 = self.resolve_team(ln.team), self.resolve_team(ln.opponent)
             pid = self.resolve_player(ln.player, ln.team)
             if pid is None or t1 is None or t2 is None:
@@ -398,6 +402,10 @@ class Predictor:
         T["rows"] += time.perf_counter() - t0
         if not slate.empty:
             slate = apply_rules(slate, self.settings, con)
+            alt = slate.odds_type.ne("standard")
+            slate.loc[alt, "why"] = slate.loc[alt, "why"] + slate.loc[alt].apply(
+                lambda r: f" · {r.odds_type}: " + ("priced at your set payout" if alt_line_mode(r, self.payouts) != "standard"
+                                                   else "priced at the standard payout; the real payout is higher, so EV is a lower bound"), axis=1)
             # Monte Carlo only where slips can be built: matches with at least one +EV leg.
             n0 = int(self.settings.get("n_sims_initial", 20000))
             n_full = max(n0, int(n_sims))
@@ -500,6 +508,21 @@ def _find_odds(books, n1, n2):
         if s >= 0.8 and s + bonus > score:
             best, score = mo, s + bonus
     return best
+
+
+def alt_line_mode(ln, payouts):
+    """How a PrizePicks demon/goblin line is priced: 'standard', a per-pick decimal payout, or 'exclude'.
+    PrizePicks doesn't publish these payouts in its API: demons pay more than standard (so the standard breakeven is a
+    conservative lower bound on EV), goblins pay less (so they need a payout set in payouts.yaml)."""
+    if ln.source != "prizepicks" or ln.odds_type == "standard":
+        return "standard"
+    cfg = payouts.get("prizepicks", {})
+    if ln.odds_type in cfg.get("exclude_odds_types", []):
+        return "exclude"
+    mode = cfg.get("alt_lines", {}).get(ln.odds_type, "exclude")
+    if isinstance(mode, (int, float)) and not isinstance(mode, bool):
+        return float(mode) if mode > 1 else "exclude"
+    return mode if mode == "standard" else "exclude"
 
 
 SKIP_COLS = ["platform", "player", "team", "opponent", "start_time", "stat", "maps", "maps_label", "line", "odds_type", "reason"]

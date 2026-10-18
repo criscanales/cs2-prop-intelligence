@@ -11,7 +11,13 @@ prizepicks:
   last_verified: null
   source: "PrizePicks app > lineup screen (payout shown before submitting)"
   single_pick_reference: power_2
-  exclude_odds_types: [demon, goblin]   # these carry different, line-specific payouts
+  # Demon / goblin lines (over only) carry line-specific payouts that PrizePicks' API doesn't publish.
+  #   standard: price at the standard breakeven. Demons pay MORE than standard, so their EV shown is a lower bound.
+  #   a number: your per-pick decimal payout for that line type (e.g. 1.6), used as the breakeven (1 / number).
+  #   exclude:  skip these lines. Goblins pay LESS than standard, so they stay excluded until you set a number.
+  alt_lines:
+    demon: standard
+    goblin: exclude
   plays:
     power_2: {legs: 2, type: power, payout: 3.0}
     power_3: {legs: 3, type: power, payout: 6.0}

@@ -123,7 +123,7 @@ source is skipped and reported in the CLI and dashboard instead of being worked 
 | source | used for | how |
 |---|---|---|
 | **bo3.gg** public JSON API (primary stats) | per-player per-map kills, HS, ADR, KAST, rating, opening duels; map, score, rounds; tier, LAN/online, BO format | `/api/v2/matches/finished?date=`, `/api/v1/games?filter[games.match_id][eq]=`, `/api/v1/games/{id}/players_stats`, `/api/v1/tournaments?filter[tournaments.id][eq]=` |
-| **PrizePicks** | CS2 kills/HS lines | `partner-api.prizepicks.com/projections?league_id=265` (demon/goblin lines excluded by default) |
+| **PrizePicks** | CS2 kills/HS lines | `partner-api.prizepicks.com/projections?league_id=265` (demon / goblin handling: see +EV rules) |
 | **Underdog** | CS2 kills/HS lines + per-line prices | `api.underdogfantasy.com/v1/over_under_lines` |
 | **Pinnacle** guest API | series/map moneylines, map round-total ladders, map overtime yes/no | `guest.api.arcadia.pinnacle.com/0.1/sports/12/...`, the same public endpoints pinnacle.com calls when logged out |
 | **Thunderpick** (via bo3.gg) | match moneylines | Pre-match Thunderpick odds that bo3.gg publishes in its upcoming-matches feed (`bet_updates`) |
@@ -161,6 +161,10 @@ the window, which skips one-off and unranked teams.
 
 - **Edge** = model P(side) − breakeven. The breakeven comes from the platform's `single_pick_reference` play in `payouts.yaml`, e.g. 2-Power = 3^(-1/2) ≈ 57.7%, or 1/decimal for Underdog lines that carry their own price.
 - **Thresholds:** min edge 3%, min 15 prior maps.
+- **PrizePicks demon / goblin lines** (over only; `alt_lines` in `payouts.yaml`). The API doesn't publish their payouts.
+  - Demons are priced at the standard breakeven. Demons pay more than standard, so their edge is a lower bound. Cards show a **Demon** badge.
+  - Goblins pay less than standard, so they stay excluded until you enter a per-pick decimal payout for them.
+  - Underdog lines with their own price (alt payouts) already use 1/decimal as the breakeven.
 - **Excluded or flagged:**
   - stand-ins
   - recent role changes

@@ -494,6 +494,10 @@ def start_meta(r):
 def play_card(r, help_edge="", help_tier=""):
     over = r.side == "over"
     plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
+    ot = getattr(r, "odds_type", "standard")
+    if isinstance(ot, str) and ot != "standard":
+        plat += (f'<span class="badge b-new" title="PrizePicks {ot} line (over only). Priced at the standard payout unless '
+                 f'you set one in payouts.yaml; demons pay more, so the edge shown is a lower bound.">{ot.title()}</span>')
     tier = r.tier if r.tier in ("A", "B") else "tier"
     chg = getattr(r, "chg", "")
     new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
