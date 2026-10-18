@@ -12,4 +12,4 @@ plotly>=5.18
 pytest>=7.4
 jinja2>=3.1.2
 Pillow>=10.0
-opencv-python-headless>=4.8  # portrait face framing (optional: without it the default crop is used)
+opencv-python-headless>=4.8,<5  # portrait face framing (optional: without it the default crop is used)
