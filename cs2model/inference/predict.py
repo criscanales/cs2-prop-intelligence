@@ -391,7 +391,7 @@ class Predictor:
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1
                 rows.append(row)
-                details[row["id"]] = {"pmf": pmf}
+                details[row["id"]] = {"pmf": pmf, "spec": out["spec"], "pkey": str(pid)}
         slate = pd.DataFrame(rows)
         T["rows"] += time.perf_counter() - t0
         if not slate.empty:

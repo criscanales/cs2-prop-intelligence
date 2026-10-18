@@ -99,3 +99,27 @@ def p_map3(spec):
         return 1.0 if spec.best_of > 3 else 0.0
     p1, p2 = spec.p_map_team1.get(1, 0.5), spec.p_map_team1.get(2, 0.5)
     return p1 * (1 - p2) + (1 - p1) * p2
+
+
+def map_preds(spec, pkey):
+    """Per map in the pool: P(played in this series) and the player's expected kills/HS on it if played."""
+    players = next(v for v in vars(spec).values() if isinstance(v, list) and v and hasattr(v[0], "kpr"))
+    ps = next(x for x in players if x.key == pkey)
+    L = min(spec.best_of, 3)
+    w = np.asarray(spec.map_weights, float)
+    w = w / w.sum()
+    if L == 1:
+        p_play = w
+    else:
+        P2 = pick_orders(w, 2)
+        p_play = P2.sum(1) + P2.sum(0)
+        if L == 3:
+            p_play = p_play + p_map3(spec) * pick_orders(w, 3).sum((0, 1))
+    G, pw, k = slot_pmfs(ps, spec, 1), p_side_win(spec, ps, 1), np.arange(K + 1)
+    out = []
+    for i, m in enumerate(spec.maps):
+        ek = pw * (G["kills"][1, i] @ k) + (1 - pw) * (G["kills"][0, i] @ k)
+        eh = pw * (G["headshots"][1, i] @ k) + (1 - pw) * (G["headshots"][0, i] @ k)
+        out.append({"map": m, "p_played": float(p_play[i]), "kills": float(ek), "headshots": float(eh),
+                    "kpr": float(ps.kpr.get(m, np.nan)), "p_win": float(pw)})
+    return out

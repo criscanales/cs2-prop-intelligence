@@ -14,6 +14,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
 from cs2model.inference.predict import Predictor
@@ -193,6 +194,10 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .b-B, .b-tier {background:var(--panel2);color:var(--tx2);border:1px solid var(--line2);}
 .b-pp, .b-ud {background:var(--panel2);border:1px solid var(--line2);}
 .badge {transition:background .15s ease;}
+.hrs {display:flex;gap:8px;flex-wrap:wrap;margin:0 0 4px;}
+.hrc {background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 12px;display:grid;grid-template-columns:auto auto;
+  gap:0 12px;font-family:var(--fm);font-size:.75rem;color:var(--tx2);min-width:120px;}
+.hrc b {font-family:var(--fd);letter-spacing:.12em;color:var(--tx);grid-column:1/-1;font-size:.85rem;}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -442,6 +447,110 @@ HELP = {"edge": "Model probability of the side minus the platform's breakeven pr
                 "C = smaller edge or sample. '-' = not a bet.",
         "why": "One-line reason for the pick (or why it is skipped)."}
 
+
+def nice_map(m):
+    return m.replace("de_", "").title() if isinstance(m, str) else m
+
+
+def series_chart(r, h):
+    maps = [m for m in r.maps if m <= 3] or list(r.maps)
+    g = h[h.map_number.isin(maps)]
+    piv = g.pivot_table(index="match_id", columns="map_number", values=r.stat, aggfunc="sum")
+    if not all(m in piv.columns for m in maps) or piv.dropna(subset=maps).empty:
+        st.caption("No recent series with these maps.")
+        return
+    piv = piv.dropna(subset=maps).join(g.groupby("match_id").agg(date=("date", "max"), opp=("opponent", "first"))).sort_values("date")
+    piv["total"] = piv[maps].sum(1)
+
+    def chip(lbl, d):
+        if not len(d):
+            return f'<div class="hrc"><b>{lbl}</b><span>no maps</span></div>'
+        return (f'<div class="hrc" title="{len(d)} series"><b>{lbl}</b><span>Over {(d.total > r.line).mean():.0%}</span>'
+                f'<span>Avg {d.total.mean():.1f}</span></div>')
+    chips = chip("L5", piv.tail(5)) + chip("L10", piv.tail(10)) + chip("L15", piv.tail(15)) + chip("H2H", piv[piv.opp == r.opponent])
+    st.markdown(f'<div class="sect">{r.stat.title()} · {r.maps_label} · recent series vs line {r.line:g}</div>'
+                f'<div class="hrs">{chips}</div>', unsafe_allow_html=True)
+    v = piv.tail(12)
+    x = [f"{pd.Timestamp(d):%m/%d}<br>{html.escape(str(o))[:12]}" for d, o in zip(v.date, v.opp)]
+    over = (v.total > r.line).values
+    fig = go.Figure()
+    for k, m in enumerate(maps):
+        cols = [("#15803d", "#22c55e", "#4ade80")[k] if o else ("#7f1d1d", "#b91c1c", "#dc2626")[k] for o in over]
+        fig.add_bar(x=x, y=v[m], marker_color=cols, marker_line_width=0, text=[f"{int(val)}<br>M{m}" for val in v[m]],
+                    textposition="inside", insidetextanchor="middle", textfont=dict(color="#f8fafc", size=12, family="JetBrains Mono"),
+                    hovertemplate=f"Map {m}: %{{y}}<extra></extra>")
+    if len(maps) > 1:
+        fig.add_scatter(x=x, y=v.total, mode="text", text=[f"{int(t)}" for t in v.total], textposition="top center",
+                        textfont=dict(color="#eef1f5", size=13, family="JetBrains Mono"), showlegend=False, hoverinfo="skip")
+    fig.add_hline(y=r.line, line_dash="dash", line_color="#e5e7eb", annotation_text=f"line {r.line:g}", annotation_position="top left")
+    fig.update_layout(barmode="stack", template="plotly_dark", height=400, margin=dict(l=10, r=10, t=24, b=10), showlegend=False,
+                      paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", bargap=0.18, uniformtext=dict(minsize=10, mode="hide"),
+                      yaxis=dict(gridcolor="#1d2530", range=[0, max(v.total.max(), r.line) * 1.15]))
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{r.name}_{st.session_state.get('board_open')}")
+    st.caption("Bottom segment = Map 1, next = Map 2 (Map 3 on top when included). Green = series went over the line, red = under.")
+
+
+def player_detail(r, i):
+    h = pred.hist[pred.hist.player_id == r.player_id].sort_values(["date", "map_number"], ascending=False)
+    h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
+    series_chart(r, h)
+    d = details.get(i, {})
+    st.markdown(f'<div class="sect">Map predictions · vs {html.escape(r.opponent)}</div>', unsafe_allow_html=True)
+    if "spec" in d:
+        mp = pd.DataFrame(A.map_preds(d["spec"], d["pkey"]))
+        bym = h.groupby("map_name").agg(maps_n=("kills", "size"), avg_k=("kills", "mean"), avg_hs=("headshots", "mean"),
+                                        kpr_hist=("kpr", "mean"), hs_hist=("hs_pct", "mean"))
+        mp = mp.merge(bym, left_on="map", right_index=True, how="left").sort_values("p_played", ascending=False)
+        allm = {"map": "All maps", "maps_n": len(h), "avg_k": h.kills.mean(), "avg_hs": h.headshots.mean(),
+                "kpr_hist": h.kpr.mean(), "hs_hist": h.hs_pct.mean()}
+        w = mp.p_played / mp.p_played.sum()
+        allm.update(kills=(w * mp.kills).sum(), headshots=(w * mp.headshots).sum(), kpr=(w * mp.kpr).sum())
+        mp = pd.concat([mp, pd.DataFrame([allm])], ignore_index=True).assign(map=lambda x: x["map"].map(nice_map))
+        mp = mp.assign(p_played=mp.p_played * 100, hs_hist=mp.hs_hist * 100, maps_n=mp.maps_n.fillna(0))
+        fmt = {"p_played": "{:.0f}%", "kills": "{:.1f}", "headshots": "{:.1f}", "kpr": "{:.2f}", "maps_n": "{:.0f}",
+               "avg_k": "{:.1f}", "avg_hs": "{:.1f}", "kpr_hist": "{:.2f}", "hs_hist": "{:.0f}%"}
+        N = st.column_config.NumberColumn
+        st.dataframe(mp[["map", "p_played", "kills", "headshots", "kpr", "maps_n", "avg_k", "avg_hs", "kpr_hist", "hs_hist"]]
+                     .style.format(fmt, na_rep="–"),
+                     hide_index=True, width="stretch", column_config={
+                         "map": "Map", "p_played": st.column_config.ProgressColumn("P(played)", format="%.0f%%", min_value=0, max_value=100,
+                                                                                    help="Chance this map is played in the series (map-pick model + P(map 3))"),
+                         "kills": N("Pred kills", format="%.1f", help="Model expected kills on this map if it is played"),
+                         "headshots": N("Pred HS", format="%.1f", help="Model expected headshots on this map if it is played"),
+                         "kpr": N("Model KPR", format="%.2f"), "maps_n": N("Maps played", format="%d", help="Last 3 months, tier 1-2"),
+                         "avg_k": N("Avg kills", format="%.1f"), "avg_hs": N("Avg HS", format="%.1f"),
+                         "kpr_hist": N("KPR", format="%.2f"), "hs_hist": N("HS %", format="%.0f%%")})
+        st.caption(f"Predictions use this match's odds ({r.odds_source}); win prob on map 1 {mp.p_win.dropna().iloc[0]:.0%}. "
+                   "Right-hand columns are the player's actual averages on each map and across all maps.")
+    else:
+        st.caption("Map predictions are not available for this line.")
+    st.markdown('<div class="sect">Last 5 matches</div>', unsafe_allow_html=True)
+    lm = h[h.match_id.isin(h.match_id.drop_duplicates().head(5))]
+    tr, orr = lm.team_rounds.astype("Int64").astype(str), lm.opp_rounds.astype("Int64").astype(str)
+    lm = lm.assign(day=pd.to_datetime(lm.date).dt.strftime("%b %d"), score=tr + "–" + orr, res=np.where(lm.won == 1, "W", "L"),
+                   mapn=lm.map_name.map(nice_map), hs_pct=(lm.hs_pct * 100).fillna(0))
+    N = st.column_config.NumberColumn
+    st.dataframe(lm[["day", "opponent", "map_number", "mapn", "score", "res", "kills", "headshots", "hs_pct", "adr", "rating"]],
+                 hide_index=True, width="stretch", column_config={
+                     "day": "Date", "opponent": "Opponent", "map_number": N("#", format="%d"), "mapn": "Map", "score": "Score",
+                     "res": "W/L", "kills": N("K", format="%d"), "headshots": N("HS", format="%d"), "hs_pct": N("HS %", format="%.0f%%"),
+                     "adr": N("ADR", format="%.0f"), "rating": N("Rating (bo3)", format="%.2f", help="bo3.gg player rating (its own scale)")})
+    with st.expander("By opponent (last 3 months)"):
+        st.dataframe(h.groupby("opponent").agg(maps=("kills", "size"), kills=("kills", "mean"), hs=("headshots", "mean"),
+                                                kpr=("kpr", "mean"), hs_pct=("hs_pct", "mean")).round(2)
+                     .sort_values("maps", ascending=False).head(15), width="stretch")
+
+
+@st.dialog("Player panel", width="large")
+def player_dialog(i):
+    r = slate.loc[i]
+    st.markdown(f'<div class="phead">{avatar(getattr(r, "player_id", None), r.player)}<div><div class="pl">{html.escape(r.player)}</div>'
+                f'<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · '
+                f'{r.stat} {r.maps_label} · line {r.line:g} · {r.side} · edge {r.edge:+.1%} · mean {r.model_mean:.1f}</div></div></div>',
+                unsafe_allow_html=True)
+    player_detail(r, i)
+
+
 tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Player", "Parlays", "Tracking", "Model"])
 
 # ---------------- slate
@@ -475,7 +584,7 @@ with tab_slate:
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"}, na_rep="")
-    st.dataframe(sty, width="stretch", height=720, hide_index=True,
+    sel = st.dataframe(sty, width="stretch", height=720, hide_index=True, on_select="rerun", selection_mode="single-row", key="board",
                  column_config={
                      "chg": st.column_config.Column("Chg", width=70, help="NEW = line added, a→b = line moved since last update"),
                      "logo": st.column_config.ImageColumn("", width=36),
@@ -488,8 +597,15 @@ with tab_slate:
                      "ev": st.column_config.Column("EV", width=70, help=HELP["ev"]), "tier": st.column_config.Column("Conf", width=50, help=HELP["tier"]),
                      "n_maps": st.column_config.Column("Maps n", width=65, help="Prior maps in the player's history"),
                      "source": st.column_config.Column("Platform", width=90), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
+    rows = sel.selection.rows if sel is not None else []
+    k = t.index[rows[0]] if rows else None
+    if k is None:
+        st.session_state.board_open = None
+    elif st.session_state.get("board_open") != k:
+        st.session_state.board_open = k
+        player_dialog(k)
     st.markdown('<div class="sect">Actions</div>', unsafe_allow_html=True)
-    st.caption("Green rows = +EV (passes all rules) · ▲ over / ▼ under · click a header to sort. Edge = model P(side) − platform breakeven.")
+    st.caption("Green rows = +EV (passes all rules) · ▲ over / ▼ under · click a header to sort, click a row to open the player panel. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
     d1.download_button("Export +EV picks (CSV)", picks.drop(columns=["maps"]).to_csv(index=False), "cs2_picks.csv")
@@ -541,19 +657,7 @@ with tab_player:
                 st.warning(r["flags"])
             st.caption(f"80% interval {r.q10:.0f}–{r.q90:.0f} · map win {r.p_map_win:.0%} · OT/map {r.p_ot:.0%} · "
                        f"map 3 {r.p_map3:.0%} · odds: {r.odds_source}")
-        h = pred.hist[pred.hist.player_id == r.player_id].sort_values("date", ascending=False)
-        h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
-        st.subheader("Last 20 maps")
-        st.dataframe(h.head(20)[["date", "opponent", "map_name", "map_number", "rounds", "won", "kills", "headshots", "adr",
-                                 "kast", "rating", "tier"]], hide_index=True, width="stretch")
-        s1, s2 = st.columns(2)
-        agg = dict(maps=("kills", "size"), kills=("kills", "mean"), hs=("headshots", "mean"), kpr=("kpr", "mean"),
-                   hs_pct=("hs_pct", "mean"))
-        s1.subheader("By map")
-        s1.dataframe(h.groupby("map_name").agg(**agg).round(2).sort_values("maps", ascending=False), width="stretch")
-        s2.subheader("By opponent")
-        s2.dataframe(h.groupby("opponent").agg(**agg).round(2).sort_values("maps", ascending=False).head(15),
-                     width="stretch")
+        player_detail(r, pick)
 
 # ---------------- parlays
 def leg_cards(ids):
