@@ -1,5 +1,9 @@
 """streamlit run cs2model/dashboard/app.py"""
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # `streamlit run` only adds the script's own dir
 
 import numpy as np
 import pandas as pd
