@@ -21,7 +21,17 @@ st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="🎯")
 st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 html, body, .stApp, .stMarkdown, button, input {font-family: Inter, system-ui, sans-serif;}
-.block-container {padding-top: 3.5rem; max-width: 1600px;}
+.block-container {padding-top: 4.75rem; max-width: 1600px;}
+header[data-testid="stHeader"] {background: rgba(11,15,20,0.94); backdrop-filter: blur(6px); border-bottom: 1px solid #1f2937;}
+div[data-testid="stTabs"] [role="tablist"] {position: sticky; top: 3.75rem; z-index: 60; background: #0b0f14; padding-top: 6px;}
+.age {display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;font-size:0.75rem;font-weight:700;}
+.age.fresh {background:rgba(34,197,94,.15);color:#86efac;} .age.stale {background:rgba(250,204,21,.15);color:#fde047;}
+.age.old {background:rgba(239,68,68,.18);color:#fca5a5;}
+.summary {display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:12px;background:#111827;border:1px solid #1f2937;
+          border-radius:14px;padding:14px 18px;margin:6px 0 12px;}
+.summary .k {color:#94a3b8;font-size:0.75rem;text-transform:uppercase;letter-spacing:.06em;}
+.summary .v {font-size:1.5rem;font-weight:800;color:#f8fafc;} .summary .v.pos {color:#86efac;} .summary .v.neg {color:#fca5a5;}
+.summary .t {grid-column:1/-1;font-weight:700;color:#e2e8f0;}
 section[data-testid="stSidebar"] {background:#0d1218; border-right:1px solid #1f2937;}
 div[data-testid="stMetric"] {background:#111827;border:1px solid #1f2937;border-radius:12px;padding:10px 14px;}
 div[data-testid="stMetricValue"] {font-size:1.4rem;font-weight:800;}
@@ -99,14 +109,13 @@ with st.sidebar:
     for e in res["errors"]:
         st.warning(f"Source unavailable: {e}")
     unverified = [p for p, c in payouts.items() if not c.get("verified")]
-    if unverified:
-        st.warning(f"Payouts not verified for {', '.join(unverified)}. Edit config/payouts.yaml to match your app.")
     st.subheader("Filters")
     platforms = st.multiselect("Platform", ["prizepicks", "underdog"], ["prizepicks", "underdog"])
     stats = st.multiselect("Stat", ["kills", "headshots"], ["kills", "headshots"])
     min_edge = st.slider("Min edge", 0.0, 0.15, float(settings["min_edge"]), 0.005, format="%.3f")
     only_ev = st.toggle("Only +EV (passes all rules)", value=False)
-    tiers = st.multiselect("Confidence tier", ["A", "B", "C", "-"], ["A", "B", "C", "-"])
+    tiers = st.multiselect("Confidence tier", ["A", "B", "C", "-"], ["A", "B", "C", "-"],
+                           help="A/B/C = confidence in a +EV pick (sample size, tenure, edge, sharp odds). '-' = not a bet.")
     q = st.text_input("Search player / team")
     st.subheader("Bankroll")
     settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings["bankroll"]), 50.0)
@@ -142,10 +151,30 @@ def change_tag(r):
 slate["chg"] = slate.apply(change_tag, axis=1) if len(slate) else ""
 view = view.assign(chg=slate.loc[view.index, "chg"])
 live_cls, live_txt = ("live", f"Live · auto-updates every {every // 60} min") if auto else ("live off", "Auto-update off")
-st.markdown(f"""<div class="hero"><div><h1>CS2 Props +EV</h1>
-<div class="sub">Updated {res['ts']:%b %d, %H:%M} UTC · {res['n_lines']} lines on the board · {len(slate)} priced ·
-{len(ch['added'])} new / {len(ch['moved'])} moved / {len(ch['removed'])} pulled since last update</div></div>
+
+
+@st.fragment(run_every=30)
+def hero():
+    age = (pd.Timestamp.now(tz="UTC") - pd.Timestamp(res["ts"])).total_seconds() / 60
+    cls = "fresh" if age < 5 else "stale" if age < 15 else "old"
+    age_txt = "just now" if age < 1 else f"{age:.0f} min old"
+    st.markdown(f"""<div class="hero"><div><h1>CS2 Props +EV</h1>
+<div class="sub">Updated {res['ts']:%b %d, %H:%M} UTC <span class="age {cls}" title="Time since lines/odds were last pulled and priced">
+data {age_txt}</span></div>
+<div class="sub">{res['n_lines']} lines on the board · {len(slate)} priced · {len(ch['added'])} new / {len(ch['moved'])} moved /
+{len(ch['removed'])} pulled since last update</div></div>
 <div class="{live_cls}"><span class="dot"></span>{live_txt}</div></div>""", unsafe_allow_html=True)
+
+
+hero()
+if unverified:
+    st.error(f"Payouts not verified for {', '.join(unverified)}: EV uses placeholder payouts and Kelly stakes are hidden. "
+             "Edit config/payouts.yaml to match your app and set verified: true.")
+HELP = {"edge": "Model probability of the side minus the platform's breakeven probability for that leg.",
+        "ev": "Expected return per $1 on this leg alone at the platform's implied single-leg price (P / breakeven − 1).",
+        "tier": "Confidence in a +EV pick: A = large sample, settled roster, edge ≥ 6%, sharp odds; B = edge ≥ 4%; "
+                "C = smaller edge or sample. '-' = not a bet.",
+        "why": "One-line reason for the pick (or why it is skipped)."}
 
 tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Player", "Parlays", "Tracking", "Model"])
 
@@ -156,8 +185,8 @@ with tab_slate:
     c[0].metric("Lines priced", len(slate))
     c[1].metric("+EV picks", len(ev))
     c[2].metric("Confidence A", int((ev.tier == "A").sum()))
-    c[3].metric("Best edge", f"{ev.edge.max():.1%}" if len(ev) else "–")
-    c[4].metric("Unmatched lines", len(res["unmatched"]))
+    c[3].metric("Best edge", f"{ev.edge.max():.1%}" if len(ev) else "–", help=HELP["edge"])
+    c[4].metric("Skipped lines", len(res["unmatched"]), help="Pulled lines not priced (see 'Skipped lines' below for reasons)")
     top = view[view.plus_ev].sort_values("edge", ascending=False).head(8)
     if len(top):
         cards = []
@@ -168,12 +197,12 @@ with tab_slate:
             cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
 <div class="mt">{html.escape(r.team)} vs {html.escape(r.opponent)} · {r.maps_label}</div>
 <div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
-<span class="badge b-edge">edge {r.edge:+.1%}</span><span class="badge b-tier">P {r.p_side:.0%} · mean {r.model_mean:.1f}</span>
-{plat}<span class="badge b-tier">conf {r.tier}</span>{new}</div>""")
+<span class="badge b-edge" title="{HELP['edge']}">edge {r.edge:+.1%}</span><span class="badge b-tier">P {r.p_side:.0%} · mean {r.model_mean:.1f}</span>
+{plat}<span class="badge b-tier" title="{HELP['tier']}">conf {r.tier}</span>{new}</div>""")
         st.markdown('<div class="sect">Top +EV plays</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
     st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
     cols = ["chg", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
-            "edge", "ev", "tier", "n_maps", "source", "flags", "reason"]
+            "edge", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
 
     def color(row):
@@ -186,7 +215,12 @@ with tab_slate:
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"})
-    st.dataframe(sty, width="stretch", height=620, hide_index=True)
+    st.dataframe(sty, width="stretch", height=620, hide_index=True,
+                 column_config={"edge": st.column_config.Column("edge", help=HELP["edge"]),
+                                "ev": st.column_config.Column("EV", help=HELP["ev"]),
+                                "tier": st.column_config.Column("tier", help=HELP["tier"]),
+                                "why": st.column_config.Column("why", help=HELP["why"], width="large"),
+                                "chg": st.column_config.Column("chg", help="NEW = line added, a→b = line moved since last update")})
     st.caption("Green = +EV over · Red = +EV under · Gray = no qualifying edge. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
@@ -196,9 +230,16 @@ with tab_slate:
     if st.button("Log +EV picks to tracker"):
         store.log_picks(picks)
         st.success(f"Logged {len(picks)} picks")
-    if len(res["unmatched"]):
-        with st.expander("Unmatched lines"):
-            st.dataframe(res["unmatched"], hide_index=True, width="stretch")
+    rc = res["recon"]
+    with st.expander(f"Line accounting: {rc['lines']} pulled = {rc['priced']} priced + {rc['skipped']} skipped"
+                     + ("" if rc["balanced"] else " (MISMATCH)")):
+        a1, a2 = st.columns(2)
+        a1.dataframe(pd.DataFrame({"skip reason": list(rc["by_reason"]), "lines": list(rc["by_reason"].values())}),
+                     hide_index=True, width="stretch")
+        a2.dataframe(pd.DataFrame(rc["per_platform"]).T.rename_axis("platform").reset_index(), hide_index=True, width="stretch")
+        sk = res["unmatched"].drop_duplicates()
+        st.dataframe(sk, hide_index=True, width="stretch")
+        st.download_button("Export skipped lines (CSV)", sk.to_csv(index=False), "cs2_skipped.csv")
 
 # ---------------- player
 with tab_player:
@@ -222,8 +263,8 @@ with tab_player:
             m[0].metric("P(over)", f"{r.p_over:.1%}")
             m[1].metric("P(under)", f"{r.p_under:.1%}")
             m = st.columns(2)
-            m[0].metric("Edge", f"{r.edge:+.1%}", r.side)
-            m[1].metric("Tier", r.tier)
+            m[0].metric("Edge", f"{r.edge:+.1%}", r.side, help=HELP["edge"])
+            m[1].metric("Confidence tier", r.tier, help=HELP["tier"])
             st.caption(r.reason)
             if r["flags"]:
                 st.warning(r["flags"])
@@ -244,11 +285,62 @@ with tab_player:
                      width="stretch")
 
 # ---------------- parlays
+def leg_cards(ids):
+    cards = []
+    for i in ids:
+        r = slate.loc[i]
+        col = "#22c55e" if r.side == "over" else "#ef4444"
+        cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
+<div class="mt">{html.escape(r.team)} vs {html.escape(r.opponent)} · {r.maps_label}</div>
+<div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
+<span class="badge b-tier" title="Mean of the model's predictive distribution">mean {r.model_mean:.1f}</span>
+<span class="badge b-tier" title="Calibrated model probability of this side (a push voids the leg)">P(side) {r.p_side:.1%}</span>
+<span class="badge b-edge" title="{HELP['edge']}">edge {r.edge:+.1%}</span></div>""")
+    st.markdown('<div class="sect">Legs</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
+
+
+def slip_summary(title, p_all, max_pay, ev, stake, verified):
+    stake_txt = f"${stake:,.2f}" if verified else "hidden"
+    pay_txt = f"{max_pay:.2f}x" + (f" (${stake * max_pay:,.2f})" if verified else "")
+    st.markdown(f"""<div class="summary"><div class="t">{html.escape(title)}</div>
+<div><div class="k" title="Probability every leg hits, from correlated simulations">Win prob</div><div class="v">{p_all:.1%}</div></div>
+<div><div class="k" title="Top payout multiplier (all legs hit)">Payout</div><div class="v">{pay_txt}</div></div>
+<div><div class="k" title="Expected return per $1 staked, including partial Flex payouts">EV</div>
+<div class="v {'pos' if ev > 0 else 'neg'}">{ev:+.1%}</div></div>
+<div><div class="k" title="Fractional Kelly, capped; hidden until payouts are verified">Stake</div><div class="v">{stake_txt}</div></div>
+</div>""", unsafe_allow_html=True)
+
+
+def slip_warnings(ids, ev=None, ev_indep=None):
+    legs = slate.loc[list(ids)]
+    dup = legs.player[legs.player_id.duplicated()].unique().tolist()
+    if dup:
+        st.error(f"Same-player legs: {', '.join(dup)}. PrizePicks/Underdog allow one pick per player per entry.")
+    same = legs.groupby("match").player.apply(lambda x: sorted(set(x)))
+    same = same[same.str.len() > 1]
+    for m, pl in same.items():
+        st.error(f"Same-match legs ({', '.join(pl)}): EV leans on the simulated correlation between them.")
+    if ev is not None and ev > 0 and ev_indep < 0.5 * ev:
+        st.error(f"Independent EV {ev_indep:+.1%} is less than half the correlated EV {ev:+.1%}: most of the edge comes from "
+                 "the correlation estimate.")
+    return bool(dup)
+
+
+SLIP_COLS = {"play": "Play", "rank": "Rank", "legs": "Legs", "p_all": "Win prob", "ev": "EV", "ev_indep": "EV if independent",
+             "hits": "Hits (0/1/2…)", "corr_ratio": "Correlation boost", "heavy_corr": "Heavy correlation",
+             "sanity_ok": "Sanity check", "matches": "Matches", "kelly_full": "Kelly (full)", "stake": "Stake",
+             "recommended": "Recommended"}
+SLIP_FMT = {"Win prob": "{:.1%}", "EV": "{:+.1%}", "EV if independent": "{:+.1%}", "Kelly (full)": "{:.1%}", "Stake": "${:.2f}",
+            "Correlation boost": lambda v: f"{v - 1:+.0%}", "Payout": "{:.2f}x"}
+SLIP_HELP = {"Win prob": "Probability all legs hit (correlated simulation, calibrated legs).",
+             "EV": "Expected return per $1 including Flex partial payouts.",
+             "EV if independent": "EV if the legs were independent; compare with EV to see how much comes from correlation.",
+             "Correlation boost": "P(all hit) relative to the product of leg probabilities, minus 1.",
+             "Hits (0/1/2…)": "Probability of each number of legs hitting."}
+
 with tab_parlay:
     plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True)
-    if not payouts.get(plat, {}).get("verified"):
-        st.warning(f"{plat} payouts unverified: stakes capped at {settings.get('unverified_max_stake_pct', 0.005):.1%} of bankroll "
-                   "until config/payouts.yaml has verified: true.")
+    verified = bool(payouts.get(plat, {}).get("verified"))
     avail = E.plays(plat, payouts)
     mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], horizontal=True)
     if mode.startswith("Auto"):
@@ -259,14 +351,15 @@ with tab_parlay:
             st.info("No +EV slips from the current +EV legs on this platform.")
         else:
             top = slips.iloc[0]
-            st.success(f"Best overall: {top.play} · EV {top.ev:+.1%} · P(all) {top.p_all:.1%} · stake ${top.stake:.2f}\n\n{top.legs}")
-            show = slips[["play", "rank", "legs", "p_all", "ev", "ev_indep", "hits", "corr_ratio", "heavy_corr", "sanity_ok",
-                          "matches", "kelly_full", "stake", "recommended"]]
-            st.dataframe(show.style.format({"p_all": "{:.1%}", "ev": "{:+.1%}", "ev_indep": "{:+.1%}", "corr_ratio": "{:.2f}",
-                                            "kelly_full": "{:.1%}", "stake": "${:.2f}"}),
-                         hide_index=True, width="stretch", height=420)
-            st.caption("ev_indep = EV if legs were independent; corr_ratio = P(all hit) / product of leg probabilities. "
-                       "6-leg slips must pass sanity_ok (still +EV under independence with every leg 2pp worse).")
+            slip_summary(f"Best slip: {top.play}", top.p_all, E.payout_vector(avail[top.play]).max(), top.ev, top.stake, verified)
+            leg_cards(top.leg_ids)
+            slip_warnings(top.leg_ids, top.ev, top.ev_indep)
+            show = slips[list(SLIP_COLS)].rename(columns=SLIP_COLS)
+            if not verified:
+                show = show.drop(columns=["Kelly (full)", "Stake"])
+            st.dataframe(show.style.format({k: v for k, v in SLIP_FMT.items() if k in show}), hide_index=True, width="stretch",
+                         height=420, column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
+            st.caption("6-leg slips must pass the sanity check (still +EV under independence with every leg 2pp worse).")
             st.subheader("EV by legs and Power vs Flex (best slip each)")
             st.bar_chart(slips.groupby("play").ev.max().sort_values())
             e1, e2, e3 = st.columns(3)
@@ -289,27 +382,34 @@ with tab_parlay:
         cand = slate[slate.source == plat].sort_values("edge", ascending=False)
         labels = cand.apply(lambda r: f"{r.player} {r.side} {r.line} {r.stat} {r.maps_label} (edge {r.edge:+.1%})", axis=1)
         sel = st.multiselect("Legs (side = model's side)", cand.id.tolist(), format_func=lambda i: labels[i], max_selections=6)
-        dup = slate.loc[sel, "player"][slate.loc[sel, "player_id"].duplicated()].tolist()
-        if dup:
-            st.error(f"One pick per player per entry: remove the extra {', '.join(dup)} leg.")
-        elif len(sel) >= 2:
+        if sel:
+            leg_cards(sel)
+        rows = []
+        if len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
             H = np.column_stack([details[i]["hit"] for i in sel])
-            rows = []
             for name, play in avail.items():
                 if play["legs"] != len(sel):
                     continue
                 r = E.evaluate(H, range(len(sel)), play)
                 f = E.kelly_fraction(r["hit_dist"], play)
-                rows.append({"play": name, "P(all)": r["p_all"], "max payout": E.payout_vector(play).max(), "EV": r["ev"],
-                             "EV if independent": r["ev_indep"], "corr ratio": r["corr_ratio"],
-                             "stake": min(settings["kelly_fraction"] * f, stake_cap(settings, payouts, plat)) * settings["bankroll"],
-                             "hits": hit_labels(r["hit_dist"])})
-            if rows:
-                st.dataframe(pd.DataFrame(rows).style.format({"P(all)": "{:.1%}", "max payout": "{:.2f}x", "EV": "{:+.1%}",
-                                                              "EV if independent": "{:+.1%}", "corr ratio": "{:.2f}",
-                                                              "stake": "${:.2f}"}), hide_index=True, width="stretch")
-            else:
-                st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
+                rows.append({"Play": name, "Win prob": r["p_all"], "Payout": E.payout_vector(play).max(), "EV": r["ev"],
+                             "EV if independent": r["ev_indep"], "Correlation boost": r["corr_ratio"],
+                             "Stake": min(settings["kelly_fraction"] * f, stake_cap(settings, payouts, plat)) * settings["bankroll"],
+                             "Hits (0/1/2…)": hit_labels(r["hit_dist"])})
+        best = max(rows, key=lambda x: x["EV"]) if rows else None
+        if best:
+            slip_summary(f"Best play for these legs: {best['Play']}", best["Win prob"], best["Payout"], best["EV"], best["Stake"],
+                         verified)
+        if sel:
+            slip_warnings(sel, best["EV"] if best else None, best["EV if independent"] if best else None)
+        if rows:
+            t = pd.DataFrame(rows)
+            if not verified:
+                t = t.drop(columns=["Stake"])
+            st.dataframe(t.style.format({k: v for k, v in SLIP_FMT.items() if k in t}), hide_index=True, width="stretch",
+                         column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
+        elif len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
+            st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
 
 # ---------------- tracking
 with tab_track:

@@ -79,7 +79,7 @@ def slate_cmd(platforms, sims, log_picks, st):
             print(f"\n{p}: best slip per play type")
             print(s[s.recommended][["play", "legs", "p_all", "ev", "ev_indep", "corr_ratio", "sanity_ok", "stake"]].to_string(index=False))
     slips = pd.concat(slips, ignore_index=True) if slips else pd.DataFrame()
-    print("exported:", *export(slate, slips))
+    print("exported:", *export(slate, slips, skipped=res["unmatched"]))
     if log_picks:
         con = store.connect()
         store.log_picks(ev, con)

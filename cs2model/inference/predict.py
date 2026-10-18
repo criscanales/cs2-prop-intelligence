@@ -130,34 +130,39 @@ class Predictor:
         return pd.concat(out, ignore_index=True)
 
     # ---------- main entry
-    def build_slate(self, lines, books, n_sims=None, seed=7, con=None):
+    def build_slate(self, lines, books, n_sims=None, seed=7, con=None, now=None):
         """Returns (slate DataFrame, hit matrix dict {row_id: bool array for recommended side}, details)."""
         n_sims = n_sims or self.settings["n_sims"]
         rng = np.random.default_rng(seed)
         groups = {}
-        unmatched = []
+        unmatched, seen_keys = [], set()
+        now = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
         for ln in lines:
+            k = (ln.source, ln.player, ln.team, ln.opponent, ln.stat, tuple(ln.maps), ln.line, ln.odds_type)
+            if k in seen_keys:
+                unmatched.append(skip_record(ln, "duplicate line on board"))
+                continue
+            seen_keys.add(k)
             if ln.source == "prizepicks" and ln.odds_type in self.payouts["prizepicks"].get("exclude_odds_types", []):
+                unmatched.append(skip_record(ln, f"PrizePicks {ln.odds_type} line (alt payout, excluded)"))
                 continue
             t1, t2 = self.resolve_team(ln.team), self.resolve_team(ln.opponent)
             pid = self.resolve_player(ln.player, ln.team)
             if pid is None or t1 is None or t2 is None:
-                unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent,
-                                  "reason": "player not in bo3 history" if pid is None else "team not matched"})
+                unmatched.append(skip_record(ln, "player not in bo3 history" if pid is None else "team not matched"))
                 continue
             skip = None
             if max(ln.maps) > 3:
                 skip = "map 4/5 lines not modelled"
-            elif ln.start_time is not None and pd.Timestamp(ln.start_time) < pd.Timestamp.now(tz="UTC") - pd.Timedelta(minutes=5):
+            elif ln.start_time is not None and pd.Timestamp(ln.start_time) < now - pd.Timedelta(minutes=5):
                 skip = "match already started (pre-match model only)"
             if skip:
-                unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent, "reason": skip})
+                unmatched.append(skip_record(ln, skip))
                 continue
             low = [n for n, t in ((ln.team, t1), (ln.opponent, t2))
                    if self.team_counts.get(t, 0) < self.settings["min_team_maps"]]
             if low:
-                unmatched.append({"player": ln.player, "team": ln.team, "opponent": ln.opponent,
-                                  "reason": f"not enough tier-1/2 maps: {', '.join(low)}"})
+                unmatched.append(skip_record(ln, f"not enough tier-1/2 maps: {', '.join(low)}"))
                 continue
             key = tuple(sorted((t1, t2)))
             groups.setdefault(key, []).append((ln, pid, t1))
@@ -251,7 +256,7 @@ class Predictor:
             slate = apply_rules(slate, self.settings, con)
             for rid, d in details.items():
                 d["hit"] = _thin(d["hit"], slate.loc[rid, "p_side"], rng)
-        return slate, details, pd.DataFrame(unmatched)
+        return slate, details, pd.DataFrame(unmatched, columns=SKIP_COLS)
 
 
 D_PRIOR = 0.68
@@ -273,6 +278,16 @@ def _find_odds(books, n1, n2):
     return best
 
 
+SKIP_COLS = ["platform", "player", "team", "opponent", "start_time", "stat", "maps", "maps_label", "line", "odds_type", "reason"]
+
+
+def skip_record(ln, reason):
+    return {"platform": ln.source, "player": ln.player, "team": ln.team, "opponent": ln.opponent,
+            "start_time": ln.start_time, "stat": ln.stat, "maps": "+".join(map(str, ln.maps)),
+            "maps_label": f"Map {ln.maps[0]}" if len(ln.maps) == 1 else "Maps " + "+".join(map(str, ln.maps)),
+            "line": ln.line, "odds_type": ln.odds_type, "reason": reason}
+
+
 def _thin(hit, p_target, rng):
     """Adjust simulated hit indicators to the calibrated marginal while keeping the joint structure."""
     p_raw = hit.mean()
@@ -289,7 +304,7 @@ def _thin(hit, p_target, rng):
 def apply_rules(s: pd.DataFrame, st, con=None) -> pd.DataFrame:
     """Exclusions, line-movement checks, confidence tiers and one-line reasons."""
     from ..tracking.store import first_line
-    flags, tiers, reasons = [], [], []
+    flags, tiers, reasons, why = [], [], [], []
     for _, r in s.iterrows():
         f = []
         if r.n_maps < st["min_maps"]:
@@ -318,7 +333,13 @@ def apply_rules(s: pd.DataFrame, st, con=None) -> pd.DataFrame:
             "kpr_10" if r.stat == "kills" else "hs_pct_10"] == r["kpr_10" if r.stat == "kills" else "hs_pct_10"] else "form n/a"
         reasons.append(f"{r.side.upper()} {r.line}: model {r.model_mean:.1f} ({stat_rate}, opp allows {r.opp_dpr:.2f} KPR, "
                        f"{r.p_map_win:.0%} map win, {r.p_ot:.0%} OT/map" + (f", {r.p_map3:.0%} map 3" if 3 in r.maps else "") + ")")
+        if f:
+            why.append(f"Skip: {f[0]}")
+        elif r.edge < st["min_edge"]:
+            why.append(f"No bet: edge {r.edge:+.1%} < {st['min_edge']:.0%} (mean {r.model_mean:.1f} vs {r.line:g})")
+        else:
+            why.append(f"{r.side.upper()} {r.line:g}: mean {r.model_mean:.1f}, {stat_rate}, P {r.p_side:.0%} vs {r.breakeven:.0%} needed")
     s = s.copy()
-    s["flags"], s["tier"], s["reason"] = flags, tiers, reasons
+    s["flags"], s["tier"], s["reason"], s["why"] = flags, tiers, reasons, why
     s["plus_ev"] = s.tier != "-"
     return s

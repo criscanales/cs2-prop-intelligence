@@ -26,6 +26,19 @@ def diff_sig(old, new):
     return {"added": added, "moved": moved, "removed": removed, "old": old}
 
 
+def reconcile(n_lines, slate, skipped):
+    """Every pulled line is either priced or skipped with exactly one reason."""
+    cat = skipped.reason.str.split(":").str[0] if len(skipped) else pd.Series(dtype=str)
+    per = {}
+    for plat in sorted(set(skipped.platform) | set(slate.source if len(slate) else [])):
+        sl = slate[slate.source == plat] if len(slate) else slate
+        per[plat] = {"lines": int((skipped.platform == plat).sum()) + len(sl), "priced_props": len(sl),
+                     "priced_matches": int(sl.match.nunique()) if len(sl) else 0}
+    return {"lines": n_lines, "priced": len(slate), "skipped": len(skipped), "balanced": len(slate) + len(skipped) == n_lines,
+            "by_reason": cat.value_counts().to_dict(), "by_reason_detail": skipped.reason.value_counts().to_dict(),
+            "per_platform": per, "priced_matches": int(slate.match.nunique()) if len(slate) else 0}
+
+
 def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sources=("pinnacle", "thunderpick"),
               n_sims=None, log=True):
     from .inference.predict import Predictor
@@ -37,6 +50,7 @@ def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sour
         store.snapshot_lines(lines, con)
     slate, details, unmatched = predictor.build_slate(lines, books, n_sims=n_sims, con=con)
     return {"slate": slate, "details": details, "unmatched": unmatched, "errors": e1 + e2,
+            "recon": reconcile(len(lines), slate, unmatched),
             "n_lines": len(lines), "sig": line_sig(lines), "n_books": len(books), "predictor": predictor,
             "ts": datetime.now(timezone.utc)}
 
@@ -91,7 +105,7 @@ def build_slips(slate, details, platform, settings, payouts, max_legs_pool=20, p
     return df
 
 
-def export(slate, slips=None, tag=None):
+def export(slate, slips=None, tag=None, skipped=None):
     OUT.mkdir(parents=True, exist_ok=True)
     tag = tag or datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")
     cols = ["source", "player", "team", "opponent", "start_time", "maps_label", "stat", "line", "model_mean", "q10", "q90",
@@ -104,4 +118,7 @@ def export(slate, slips=None, tag=None):
         paths += [OUT / f"slips_{tag}.csv", OUT / f"slips_{tag}.json"]
         slips.to_csv(paths[2], index=False)
         paths[3].write_text(json.dumps(slips.to_dict("records"), default=str, indent=1))
+    if skipped is not None and len(skipped):
+        paths.append(OUT / f"skipped_{tag}.csv")
+        skipped.drop_duplicates().to_csv(paths[-1], index=False)
     return paths

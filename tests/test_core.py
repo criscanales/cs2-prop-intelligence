@@ -243,3 +243,18 @@ def test_line_board_diff():
     new = {("underdog", "a", "kills", (1, 2), "standard"): 31.5, ("prizepicks", "c", "kills", (1,), "standard"): 15.0}
     d = diff_sig(old, new)
     assert len(d["added"]) == 1 and len(d["moved"]) == 1 and len(d["removed"]) == 1
+
+
+def test_skip_record_and_reconcile():
+    import pandas as pd
+    from cs2model.inference.predict import SKIP_COLS, skip_record
+    from cs2model.pipeline import reconcile
+    from cs2model.types import PropLine
+    ln = PropLine("prizepicks", "x", "A", "B", "kills", (4,), 15.0)
+    sk = pd.DataFrame([skip_record(ln, "map 4/5 lines not modelled"),
+                       skip_record(ln, "not enough tier-1/2 maps: B")], columns=SKIP_COLS)
+    assert {"platform", "stat", "line", "maps"} <= set(sk.columns) and sk.loc[0, "maps_label"] == "Map 4"
+    slate = pd.DataFrame({"source": ["underdog"], "match": ["1-2"]})
+    r = reconcile(3, slate, sk)
+    assert r["balanced"] and r["by_reason"]["not enough tier-1/2 maps"] == 1
+    assert r["per_platform"]["underdog"] == {"lines": 1, "priced_props": 1, "priced_matches": 1}
