@@ -220,16 +220,18 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .ph-nums {display:grid;grid-template-columns:repeat(4,auto);gap:26px;} .ph-nums .v {font-family:var(--fm);font-size:1.15rem;color:var(--tx);margin-top:3px;}
 .ph-nums .v.pos {color:#4ade80;}
 .ss-top {font-size:.8rem;color:var(--tx2);margin:-2px 0 10px;}
-.ssr {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px;}
+.ssr {display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) minmax(0,1.1fr);gap:10px;margin-bottom:12px;}
 .ss {background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;transition:border-color .15s;}
 .ss:hover {border-color:var(--line2);}
 .ss-h {display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
 .ss-h b {font-family:var(--fd);letter-spacing:.14em;font-size:.85rem;color:var(--tx);} .ss-h span {font-family:var(--fm);font-size:.7rem;color:var(--mut);}
-.ss-r {display:grid;grid-template-columns:62px auto 1fr;gap:8px;align-items:baseline;font-family:var(--fm);}
+.ss-r {display:grid;grid-template-columns:70px auto 1fr;gap:8px;align-items:baseline;font-family:var(--fm);}
 .ss-r .k {font-size:.7rem;color:var(--mut);font-family:Inter,sans-serif;} .ss-r .v {font-size:1.05rem;color:var(--tx);}
 .ss-r .f {font-size:.72rem;color:var(--tx2);text-align:right;} .ss-r .f.pos {color:#4ade80;} .ss-r .f.neg {color:#a3acb9;}
+.ss-m {border-color:rgba(232,117,42,.45);background:linear-gradient(180deg,rgba(232,117,42,.07),var(--panel));}
+.nr {border-bottom:1px dotted var(--mut);cursor:help;}
 .ss-na {font-size:.78rem;color:var(--mut);padding:6px 0;}
-.lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:4px 0 -6px;}
+.lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:2px 0 -20px;position:relative;z-index:1;}
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #e8752a;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
 @media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
@@ -489,10 +491,14 @@ def nice_map(m):
 
 def profile_header(r):
     over = r.side == "over"
+    why = html.escape(str(getattr(r, "reason", "") or ""), quote=True)
+    conf = (f"Conf {r.tier}" if r.tier != "-" else
+            '<span class="nr" title="Confidence tiers (A/B/C) are only given to lines that pass every +EV rule '
+            f'(min edge, sample size, data checks). This line does not{": " + why if why else ""}.">Not rated ⓘ</span>')
     return (f'<div class="ph"><div class="ph-id"><div class="ph-av">{avatar(getattr(r, "player_id", None), r.player)}</div><div>'
             f'<div class="ph-name">{html.escape(r.player)}</div>'
             f'<div class="ph-team">{logo(r.team_id)}<b>{html.escape(r.team)}</b><span class="vs">vs</span>{logo(r.opp_id)}{html.escape(r.opponent)}</div>'
-            f'<div class="ph-meta">{html.escape(str(r.source).title())} · Conf {r.tier} · {int(r.n_maps)} prior maps</div></div></div>'
+            f'<div class="ph-meta">{html.escape(str(r.source).title())} · {conf} · {int(r.n_maps)} prior maps</div></div></div>'
             f'<div class="ph-bet"><div class="ph-k">Selected prop</div><div class="ph-line">'
             f'<span class="ph-side {"over" if over else "under"}">{"▲ OVER" if over else "▼ UNDER"}</span>'
             f'<span class="ln">{r.line:g}</span><span class="ic">{ICON.get(r.stat, "")}</span><span class="st">{r.stat}</span>'
@@ -503,7 +509,7 @@ def profile_header(r):
             f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div></div></div>')
 
 
-SHADE = {True: ("#15803d", "#4ade80", "#bbf7d0"), False: ("#b91c1c", "#f87171", "#fecaca")}
+MAPC = ("#2f4a66", "#5f86ad", "#a9c3dc")
 
 
 def series_chart(r, h, scope):
@@ -524,17 +530,21 @@ def series_chart(r, h, scope):
         push, avg = int((d.total == r.line).sum()), d.total.mean()
         diff = avg - r.line
         tags = (" · small sample" if n < 3 else "") + (f" · {push} push" if push else "")
-        return (f'<div class="ss"><div class="ss-h"><b>{lbl}</b><span>n={n}{tags}</span></div>'
+        return (f'<div class="ss"><div class="ss-h"><b>{lbl}</b><span>{n} past series{tags}</span></div>'
                 f'<div class="ss-r"><span class="k">{"Over" if over_side else "Under"} hit</span><span class="v">{hit.mean():.0%}</span>'
                 f'<span class="f">{int(hit.sum())}/{n}</span></div>'
                 f'<div class="ss-r"><span class="k">Avg</span><span class="v">{avg:.1f}</span>'
                 f'<span class="f {"pos" if (diff > 0) == over_side and diff != 0 else "neg"}">{diff:+.1f} vs line</span></div></div>')
     h2h = piv[piv.opp == r.opponent] if len(piv) else piv
+    model_cell = (f'<div class="ss ss-m"><div class="ss-h"><b>MODEL</b><span>forecast · this match</span></div>'
+                  f'<div class="ss-r"><span class="k">P({r.side})</span><span class="v">{r.p_side:.1%}</span><span class="f">edge {r.edge:+.1%}</span></div>'
+                  f'<div class="ss-r"><span class="k">Mean</span><span class="v">{r.model_mean:.1f}</span>'
+                  f'<span class="f">{r.model_mean - r.line:+.1f} vs line</span></div></div>')
     st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
-                f'<div class="ss-top">Hit rates are for the selected side: <span class="ph-side {"over" if over_side else "under"}">'
+                f'<div class="ss-top"><b>Historical</b> hit rates show how often past series beat this line; they are not a forecast. The model card on the right is the predicted probability for this match. Side: <span class="ph-side {"over" if over_side else "under"}">'
                 f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}</span> · counted on series where all of {r.maps_label} was played</div>'
                 f'<div class="ssr">{cell("L5", piv.tail(5))}{cell("L10", piv.tail(10))}{cell("L15", piv.tail(15))}'
-                f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 3 months")}</div>', unsafe_allow_html=True)
+                f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 3 months")}{model_cell}</div>', unsafe_allow_html=True)
     if piv.empty:
         st.info(f"No recent series with {r.maps_label} played; nothing to chart.")
         return
@@ -542,7 +552,9 @@ def series_chart(r, h, scope):
                                label_visibility="collapsed") or "L10"
     v = piv.tail({"L5": 5, "L10": 10, "L15": 15}.get(win, len(piv)))
     over = (v.total > r.line).values
-    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}" for d, o in zip(v.date, v.opp)]
+    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}<br><span style='color:{c}'>{t}</span>"
+              for d, o, t, c in zip(v.date, v.opp, np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH")),
+                                    np.where(v.total > r.line, "#4ade80", np.where(v.total < r.line, "#f87171", "#a3acb9")))]
     res = np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH"))
     cd = np.column_stack([[f"{pd.Timestamp(d):%b %d}" for d in v.date], v.opp.astype(str)] + [v[m].astype(int) for m in maps]
                          + [v.total.astype(int), res])
@@ -550,7 +562,7 @@ def series_chart(r, h, scope):
           + f"Series total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line {r.line:g} → %{{customdata[{3 + len(maps)}]}}<extra></extra>")
     fig = go.Figure()
     for k, m in enumerate(maps):
-        fig.add_bar(x=labels, y=v[m], name=f"Map {m}", marker=dict(color=[SHADE[bool(o)][k] for o in over], line=dict(color="#0a0d12", width=1.5)),
+        fig.add_bar(x=labels, y=v[m], name=f"Map {m}", marker=dict(color=MAPC[k], line=dict(color="#0a0d12", width=1.5)),
                     customdata=cd, hovertemplate=ht)
     fig.add_scatter(x=labels, y=v.total, mode="text", text=[f"{'▲' if o else '▼'} {int(t)}" for o, t in zip(over, v.total)],
                     textposition="top center", textfont=dict(color=["#86efac" if o else "#fca5a5" for o in over], size=13, family="JetBrains Mono"),
@@ -558,15 +570,15 @@ def series_chart(r, h, scope):
     fig.add_hline(y=r.line, line_dash="dash", line_color="#e8752a", line_width=1.5)
     fig.add_annotation(xref="paper", x=1.0, xanchor="left", y=r.line, text=f" {r.line:g}", showarrow=False,
                        font=dict(color="#e8752a", size=12, family="JetBrains Mono"))
-    fig.update_layout(barmode="stack", template="plotly_dark", height=360, margin=dict(l=8, r=44, t=28, b=8), showlegend=False,
+    fig.update_layout(barmode="stack", template="plotly_dark", height=340, margin=dict(l=8, r=44, t=4, b=8), showlegend=False,
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", bargap=0.5 if len(v) < 6 else 0.3,
                       hoverlabel=dict(bgcolor="#11161d", bordercolor="#2e3846", font=dict(family="Inter", size=12, color="#eef1f5")),
                       xaxis=dict(type="category", tickfont=dict(size=11, color="#a3acb9")),
                       yaxis=dict(gridcolor="#1d2530", zeroline=False, title=dict(text=r.stat, font=dict(size=11, color="#6b7684")),
-                                 range=[0, max(v.total.max(), r.line) * 1.18]))
-    sw = "".join(f'<span><i style="background:{SHADE[True][k]}"></i><i style="background:{SHADE[False][k]}"></i>Map {m}</span>'
+                                 range=[0, max(v.total.max(), r.line) * 1.12]))
+    sw = "".join(f'<span><i style="background:{MAPC[k]}"></i>Map {m}</span>'
                  for k, m in enumerate(maps))
-    st.markdown(f'<div class="lg">{sw}<span>▲ green = over</span><span>▼ red = under</span><span><i class="dash"></i>Line {r.line:g}</span>'
+    st.markdown(f'<div class="lg">{sw}<span>▲ green total = over</span><span>▼ red total = under</span><span><i class="dash"></i>Line {r.line:g}</span>'
                 f'<span class="mut">Hover a bar for map values</span></div>', unsafe_allow_html=True)
     st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
 
