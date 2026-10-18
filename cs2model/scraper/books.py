@@ -2,8 +2,10 @@
 
 - Pinnacle guest API (same public endpoints pinnacle.com calls when logged out).
 - Thunderpick moneylines as relayed by bo3.gg's public upcoming-matches feed.
+- Polymarket CS2 match markets (public Gamma API): series / per-map winner, maps total and map round totals.
   thunderpick.io itself answers 403 to non-browser clients, so it is never called directly.
 """
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -17,10 +19,15 @@ PINNACLE_KEY = "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R"
 PINNACLE_ESPORTS = 12
 
 BO3_API = "https://api.bo3.gg/api"
+POLYMARKET_API = "https://gamma-api.polymarket.com"
+POLYMARKET_MAX_SPREAD = 0.10
 
 
 def _t(s):
-    return datetime.fromisoformat(s.replace("Z", "+00:00")) if s else None
+    if not s:
+        return None
+    s = re.sub(r"(\.\d{1,6})\d*", lambda m: m.group(1).ljust(7, "0"), s.replace("Z", "+00:00"))
+    return datetime.fromisoformat(s)
 
 
 def fetch_pinnacle(ttl=300) -> list[MatchOdds]:
@@ -104,6 +111,72 @@ def fetch_thunderpick_via_bo3(ttl=300, days_ahead=2) -> list[MatchOdds]:
     return out
 
 
+def _pm_prob(m):
+    """Mid price of the market's first outcome, or None when the book is too thin to trust."""
+    try:
+        bid, ask = float(m["bestBid"]), float(m["bestAsk"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not 0 < bid <= ask < 1 or ask - bid > POLYMARKET_MAX_SPREAD:
+        return None
+    return (bid + ask) / 2
+
+
+def _pm_outcomes(m):
+    try:
+        return json.loads(m.get("outcomes") or "[]")
+    except ValueError:
+        return []
+
+
+def polymarket_match(e) -> MatchOdds | None:
+    mks = e.get("markets") or []
+    ml = next((m for m in mks if m.get("sportsMarketType") == "moneyline" and not m.get("closed")), None)
+    outs = _pm_outcomes(ml) if ml else []
+    if len(outs) != 2:
+        return None
+    bo = re.search(r"\(BO(\d)\)", e.get("title") or "")
+    mo = MatchOdds("polymarket", outs[0], outs[1], _t(e.get("startTime")), int(bo.group(1)) if bo else 3)
+    mo.p_series_team1 = _pm_prob(ml)
+    for m in mks:
+        if m.get("closed"):
+            continue
+        p, kind, q = _pm_prob(m), m.get("sportsMarketType") or "", m.get("question") or ""
+        if p is None:
+            continue
+        if kind == "child_moneyline" and (mm := re.search(r"Map (\d) Winner", q)):
+            o = _pm_outcomes(m)
+            if len(o) == 2:
+                mo.p_map_team1[int(mm.group(1))] = p if o[0] == outs[0] else 1 - p
+        elif kind == "totals" and mo.best_of == 3 and re.search(r"O/U 2\.5", q) and _pm_outcomes(m)[:1] == ["Over"]:
+            mo.p_map3 = p
+        elif (mm := re.fullmatch(r"round_over_under_game_(\d)", kind)) and (ln := re.search(r"(\d+\.5)", q)) \
+                and _pm_outcomes(m)[:1] == ["Over"]:
+            mo.rounds_ladder.setdefault(int(mm.group(1)), []).append((float(ln.group(1)), p))
+    if mo.p_series_team1 is None and not mo.p_map_team1:
+        return None
+    for k in mo.rounds_ladder:
+        mo.rounds_ladder[k].sort()
+    _fill_series(mo)
+    return mo
+
+
+def fetch_polymarket(ttl=300, days_ahead=3, pages=4) -> list[MatchOdds]:
+    out, now = [], datetime.now(timezone.utc)
+    for i in range(pages):
+        evs = fetch_json(f"{POLYMARKET_API}/events", ttl=ttl,
+                         params={"closed": "false", "tag_slug": "counter-strike-2", "limit": 100, "offset": 100 * i})
+        for e in evs or []:
+            st = _t(e.get("startTime"))
+            if st is None or not (now - timedelta(hours=6) <= st <= now + timedelta(days=days_ahead)):
+                continue
+            if (mo := polymarket_match(e)) is not None:
+                out.append(mo)
+        if len(evs or []) < 100:
+            break
+    return out
+
+
 def _fill_series(mo: MatchOdds) -> None:
     """Fill in whichever of series / per-map win probabilities is missing."""
     if mo.p_series_team1 is not None and mo.best_of > 1:
@@ -114,9 +187,9 @@ def _fill_series(mo: MatchOdds) -> None:
         mo.p_map_team1.setdefault(1, mo.p_series_team1)
 
 
-def fetch_all_books(sources=("pinnacle", "thunderpick")) -> tuple[list[MatchOdds], list[str]]:
+def fetch_all_books(sources=("pinnacle", "polymarket", "thunderpick")) -> tuple[list[MatchOdds], list[str]]:
     res, errors = [], []
-    fns = {"pinnacle": fetch_pinnacle, "thunderpick": fetch_thunderpick_via_bo3}
+    fns = {"pinnacle": fetch_pinnacle, "polymarket": fetch_polymarket, "thunderpick": fetch_thunderpick_via_bo3}
     for s in sources:
         try:
             res.extend(fns[s]())

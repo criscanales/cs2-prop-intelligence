@@ -39,7 +39,7 @@ def reconcile(n_lines, slate, skipped):
             "per_platform": per, "priced_matches": int(slate.match.nunique()) if len(slate) else 0}
 
 
-def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sources=("pinnacle", "thunderpick"),
+def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sources=("pinnacle", "polymarket", "thunderpick"),
               n_sims=None, log=True, on_lines=None):
     from .inference.predict import Predictor
     predictor = predictor or Predictor()

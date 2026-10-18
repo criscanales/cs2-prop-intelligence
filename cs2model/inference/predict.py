@@ -516,12 +516,17 @@ def list_index(m):
     return MAPS.index(m) if m in MAPS else -1
 
 
+# tie-break between books on the same match: Pinnacle (has map ladders / OT), then Polymarket (validated in
+# docs/validation.md against the Elo fallback), then Thunderpick
+BOOK_PRIORITY = {"pinnacle": 0.02, "polymarket": 0.01}
+
+
 def _find_odds(books, n1, n2):
     best, score = None, 0.0
     for mo in books:
         s = min(max(team_similarity(mo.team1, n1), team_similarity(mo.team2, n1)),
                 max(team_similarity(mo.team1, n2), team_similarity(mo.team2, n2)))
-        bonus = 0.01 if mo.source == "pinnacle" else 0.0  # pinnacle has map ladders / OT
+        bonus = BOOK_PRIORITY.get(mo.source, 0.0)
         if s >= 0.8 and s + bonus > score:
             best, score = mo, s + bonus
     return best

@@ -80,3 +80,24 @@ gap
 Deviance improves in every window, tier and sample-size bucket, and MAE never gets worse. The gains are small
 (about 0.1%), largest where the raw model moves 1+ kills from the player's recent rate. Headshot bias drops in every
 slice; kills bias is unchanged (about +0.25 kills/map on tier S and A maps, ~0 on tier B).
+
+## Polymarket match odds
+
+Pre-match Polymarket series prices for closed CS2 events (public Gamma + CLOB price history, last traded price at
+least 5 minutes before start), matched to bo3.gg results: 2,319 matches, 18 Jul - 18 Oct. Baseline is the app's
+current no-odds fallback (pre-match map Elo -> series). The Thunderpick odds stored with bo3.gg history are a
+post-match snapshot (25% of favourites sit at 1.03 or shorter), so they can't be scored; Pinnacle has no history.
+Blend / extremize weights were fit on the first half and scored on the held-out second half (1,160 matches):
+
+| held-out          | Brier  | log loss |
+|-------------------|--------|----------|
+| Polymarket        | 0.1923 | 0.5672   |
+| Elo fallback      | 0.2345 | 0.6612   |
+| Polymarket x1.16  | 0.1907 | 0.5626   |
+| Polymarket + Elo  | 0.1908 | 0.5632   |
+| coin flip         | 0.2500 | 0.6931   |
+
+Polymarket beats the Elo fallback in every tier (S 0.648 vs 0.676, A 0.659 vs 0.701, B 0.565 vs 0.665, C 0.538 vs
+0.647 log loss) and in both volume buckets. Favourites win slightly more often than priced (0.65 -> 0.69,
+0.75 -> 0.80), so stretching the price helps a little on B/C but not on S/A, and blending in Elo adds nothing.
+Polymarket is used as a match-odds source (after Pinnacle, before Thunderpick) with its price as-is.

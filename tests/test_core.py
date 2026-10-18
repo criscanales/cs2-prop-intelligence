@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pandas as pd
 import pytest
@@ -385,3 +386,37 @@ def test_preds_log_grade_and_bias_report(tmp_path):
     con.execute("UPDATE preds SET actual=29")
     br = store.bias_report(con)
     assert br.loc[0, "scope"] == "Maps 1+2" and br.loc[0, "model_minus_actual"] == pytest.approx(4.0)
+
+
+def test_polymarket_event_parsing():
+    from cs2model.scraper.books import polymarket_match
+
+    def mk(kind, q, outs, bid, ask):
+        return {"sportsMarketType": kind, "question": q, "outcomes": json.dumps(outs), "bestBid": bid, "bestAsk": ask}
+
+    e = {"title": "Counter-Strike: A vs B (BO3) - Cup", "startTime": "2026-10-19T18:00:00Z", "markets": [
+        mk("moneyline", "A vs B", ["A", "B"], 0.61, 0.62),
+        mk("child_moneyline", "A vs B - Map 1 Winner", ["B", "A"], 0.40, 0.44),
+        mk("totals", "Games Total: O/U 2.5", ["Over", "Under"], 0.43, 0.50),
+        mk("round_over_under_game_1", "Map 1 Total Rounds: Over/Under 21.5", ["Over", "Under"], 0.08, 0.92),
+        mk("round_over_under_game_2", "Map 2 Total Rounds: Over/Under 21.5", ["Over", "Under"], 0.36, 0.40),
+    ]}
+    mo = polymarket_match(e)
+    assert (mo.source, mo.team1, mo.team2, mo.best_of) == ("polymarket", "A", "B", 3)
+    assert mo.p_series_team1 == pytest.approx(0.615)
+    assert mo.p_map_team1[1] == pytest.approx(0.58)
+    assert 3 in mo.p_map_team1
+    assert mo.p_map3 == pytest.approx(0.465)
+    assert mo.rounds_ladder == {2: [(21.5, pytest.approx(0.38))]}
+    e["markets"][0]["bestAsk"] = 0.9
+    assert polymarket_match({**e, "markets": e["markets"][:1]}) is None
+
+
+def test_find_odds_book_priority():
+    from cs2model.inference.predict import _find_odds
+    from cs2model.types import MatchOdds
+    bk = [MatchOdds(src, "Team Liquid", "fnatic", None, 3) for src in ("thunderpick", "polymarket", "pinnacle")]
+    assert _find_odds(bk, "Liquid", "fnatic").source == "pinnacle"
+    assert _find_odds(bk[:2], "fnatic", "Liquid").source == "polymarket"
+    assert _find_odds(bk[:1], "Liquid", "fnatic").source == "thunderpick"
+    assert _find_odds(bk, "NAVI", "fnatic") is None
