@@ -295,3 +295,11 @@ def test_sim_seed_and_append_topup():
     assert top["_n"] == 5000 and top["p0"]["kills"].shape[0] == 5000
     assert np.array_equal(top["p0"]["kills"][:2000], a["p0"]["kills"])  # earlier draws kept, not redrawn
     assert not np.array_equal(top["p0"]["kills"][2000:4000], a["p0"]["kills"])  # new draws continue the stream
+
+
+def test_portrait_frame_falls_back_without_face():
+    from cs2model.scraper.portraits import DEFAULT, frame
+    assert frame(np.zeros((455, 354, 4), np.uint8)) == DEFAULT
+    blob = np.zeros((455, 354, 4), np.uint8)
+    blob[40:300, 120:240] = 200
+    assert frame(blob) == DEFAULT

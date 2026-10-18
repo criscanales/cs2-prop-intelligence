@@ -20,6 +20,8 @@ from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_s
 from cs2model.inference.predict import Predictor
 from cs2model.scraper.bo3_history import DATA as HDATA
 from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
+from cs2model.scraper.portraits import DEFAULT as PIC_DEFAULT
+from cs2model.scraper.portraits import frames as portrait_frames
 from cs2model.scraper.lines import fetch_all_lines
 from cs2model.tracking import store
 from cs2model.training.train import MODEL_DIR
@@ -123,7 +125,10 @@ div[data-testid="stDataFrame"] {border:1px solid var(--line);border-radius:var(-
   color:#0a0d12;background:var(--c);clip-path:polygon(10px 0,100% 0,100% 100%,0 100%);}
 .pc .who {display:flex;align-items:center;gap:10px;}
 .av {width:44px;height:44px;border-radius:8px;object-fit:cover;object-position:top;background:var(--panel2);border:1px solid var(--line2);flex:none;}
-.av.pic {background-repeat:no-repeat;background-size:175% auto;background-position:50% 4%;}
+.av.pic {position:relative;overflow:hidden;border-color:rgba(255,122,26,.14);background-color:#121820;background-repeat:no-repeat;
+  background-image:var(--pic),radial-gradient(70% 55% at 50% 30%,rgba(214,222,232,.10),transparent 70%),radial-gradient(120% 85% at 50% 28%,rgba(255,122,26,.12),transparent 62%),linear-gradient(180deg,#1f2631,#0f141b);
+  background-size:var(--bs,175%) auto,100% 100%,100% 100%,100% 100%;background-position:var(--bp,50% 4%),0 0,0 0,0 0;}
+.av.pic::after {content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:linear-gradient(180deg,transparent 66%,rgba(10,13,18,.35));}
 .av.ini {display:flex;align-items:center;justify-content:center;font-family:var(--fd);font-weight:700;font-size:1.2rem;color:var(--tx2);}
 .pc .pl {font-family:var(--fd);font-weight:700;font-size:1.4rem;line-height:1;color:var(--tx);letter-spacing:.02em;}
 .pc .mt {color:var(--tx2);font-size:.74rem;margin-top:4px;}
@@ -413,6 +418,32 @@ def load_photos():
 
 
 PHOTOS = load_photos()
+
+
+@st.cache_resource
+def _frames_box():
+    return {"f": {}, "busy": False, "n": -1}
+
+
+def load_frames():
+    """Per-photo face crops, computed once in the background (until then the default crop is used)."""
+    b = _frames_box()
+    if not b["busy"] and b["n"] != len(PHOTOS):
+        b["busy"], b["n"] = True, len(PHOTOS)
+        photos = dict(PHOTOS)
+
+        def work():
+            try:
+                b["f"] = portrait_frames(photos)
+            except Exception:  # noqa: BLE001  portraits just keep the default crop
+                pass
+            finally:
+                b["busy"] = False
+        threading.Thread(target=work, daemon=True).start()
+    return b["f"]
+
+
+FRAMES = load_frames()
 LOGO_SRC = "data:image/png;base64," + base64.b64encode((Path(__file__).parent / "assets" / "cs2_logo_light.png").read_bytes()).decode()
 BRAND = (f'<div class="brand"><img src="{LOGO_SRC}" alt="Counter-Strike"/></div>'
          '<div class="brand-sub">Props <b>+EV</b> terminal</div>')
@@ -421,7 +452,9 @@ BRAND = (f'<div class="brand"><img src="{LOGO_SRC}" alt="Counter-Strike"/></div>
 def avatar(pid, name):
     u = PHOTOS.get(int(pid)) if pid is not None and pid == pid else None
     if u:
-        return f'<div class="av pic" role="img" aria-label="{html.escape(name or "")}" style="background-image:url(&quot;{html.escape(u)}&quot;)"></div>'
+        bs, bx, by = FRAMES.get(int(pid), PIC_DEFAULT)
+        return (f'<div class="av pic" role="img" aria-label="{html.escape(name or "")}" '
+                f'style="--pic:url(&quot;{html.escape(u)}&quot;);--bs:{bs}%;--bp:{bx}% {by}%"></div>')
     return f'<div class="av ini">{html.escape((name or "?")[:2].upper())}</div>'
 
 
