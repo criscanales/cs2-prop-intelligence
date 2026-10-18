@@ -235,6 +235,55 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
 @media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
+.ph-q {margin-top:10px;font-size:.75rem;color:var(--tx2);border-left:2px solid var(--line2);padding-left:8px;max-width:520px;}
+.ph-q.ok {color:#86efac;border-left-color:rgba(34,197,94,.6);}
+.pp-tw {overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);}
+.pp-tbl {width:100%;border-collapse:collapse;font-size:.85rem;min-width:860px;}
+.pp-tbl.sm {min-width:620px;font-size:.82rem;}
+.pp-tbl th {font-family:var(--fd);font-weight:600;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--tx2);
+  text-align:right;padding:8px 12px;border-bottom:1px solid var(--line);white-space:nowrap;background:var(--panel);}
+.pp-tbl td {font-family:var(--fm);text-align:right;padding:8px 12px;border-bottom:1px solid rgba(35,43,54,.7);color:var(--tx);
+  white-space:nowrap;font-variant-numeric:tabular-nums;}
+.pp-tbl tbody tr:last-child td {border-bottom:0;}
+.pp-tbl .l {text-align:left;} .pp-tbl .c {text-align:center;}
+.pp-tbl .g-m, .pp-tbl .g-h {border-left:1px solid var(--line2);}
+.pp-tbl tr.grp th {font-size:.68rem;letter-spacing:.16em;padding:9px 12px 5px;text-align:center;border-bottom:2px solid transparent;}
+.pp-tbl tr.grp th.g-m {color:#e8752a;border-bottom-color:rgba(232,117,42,.55);}
+.pp-tbl tr.grp th.g-h {color:var(--steel);border-bottom-color:rgba(122,162,200,.5);}
+.pp-tbl tbody tr {transition:background .12s;} .pp-tbl tbody tr:hover td {background:rgba(255,255,255,.025);}
+.pp-tbl .mapc {font-family:Inter,sans-serif;font-weight:600;}
+.pp-tbl tr.hl td.mapc {box-shadow:inset 3px 0 0 #e8752a;}
+.pp-tbl tr.tot td {background:var(--panel2);border-top:1px solid var(--line2);font-weight:600;}
+.pp-lk {font-family:var(--fd);font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:#e8752a;margin-left:8px;
+  border:1px solid rgba(232,117,42,.4);border-radius:3px;padding:0 4px;font-weight:600;vertical-align:1px;}
+.pp-pb {display:flex;align-items:center;gap:8px;} .pp-pbt {width:120px;height:6px;border-radius:3px;background:#1d2530;overflow:hidden;}
+.pp-pbt i {display:block;height:100%;background:#5f86ad;border-radius:3px;} .pp-pb.hl .pp-pbt i {background:#e8752a;}
+.pp-pb span {min-width:36px;text-align:right;}
+.pp-tip {border-bottom:1px dotted var(--mut);cursor:help;} .pp-tip:focus-visible {outline:2px solid #e8752a;outline-offset:2px;}
+.pp-na {color:var(--mut);cursor:help;}
+.pp-dl {font-style:normal;font-size:.6rem;margin-left:4px;vertical-align:1px;} .pp-dl.up {color:rgba(74,222,128,.8);} .pp-dl.dn {color:rgba(248,113,113,.8);}
+.pp-wl {display:inline-block;min-width:20px;text-align:center;font-family:var(--fd);font-weight:700;font-size:.72rem;padding:1px 5px;border-radius:3px;}
+.pp-wl.w {color:#86efac;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);}
+.pp-wl.l {color:#fca5a5;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);}
+.pp-wl.t {color:var(--tx2);border:1px solid var(--line2);}
+.pp-note {font-size:.75rem;color:var(--mut);margin:6px 0 10px;}
+.pp-empty {border:1px dashed var(--line2);border-radius:8px;padding:14px 16px;color:var(--tx2);font-size:.85rem;background:var(--panel);}
+.pp-mhh, .pp-mh > summary {display:grid;grid-template-columns:14px 62px minmax(120px,1fr) 78px 52px 56px 56px 64px;gap:12px;align-items:center;}
+.pp-mhh {padding:0 14px 6px;font-family:var(--fd);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);}
+.pp-mhh .r, .pp-mh .r {text-align:right;}
+.pp-mh {border:1px solid var(--line);border-radius:8px;background:var(--panel);margin-bottom:8px;overflow:hidden;}
+.pp-mh > summary {list-style:none;cursor:pointer;padding:10px 14px;font-family:var(--fm);font-size:.82rem;color:var(--tx2);transition:background .12s;}
+.pp-mh > summary::-webkit-details-marker {display:none;}
+.pp-mh > summary::before {content:"▸";color:var(--mut);transition:transform .15s;display:inline-block;}
+.pp-mh[open] > summary::before {transform:rotate(90deg);}
+.pp-mh > summary:hover {background:rgba(255,255,255,.025);}
+.pp-mh > summary:focus-visible {outline:2px solid #e8752a;outline-offset:-2px;}
+.pp-mh > summary.one {grid-template-columns:14px 1fr auto;}
+.pp-mh .so {font-family:Inter,sans-serif;font-weight:600;color:var(--tx);font-size:.9rem;} .pp-mh summary b {color:var(--tx);font-weight:600;}
+.pp-mh .pp-tw {border:0;border-top:1px solid var(--line);border-radius:0;}
+div[role="dialog"] {overflow-x:hidden;}
+@media (max-width:900px) {.pp-mhh, .pp-mh > summary {grid-template-columns:14px 56px 1fr 74px;} .pp-mhh .hm, .pp-mh .hm {display:none;}
+  .ph-nums {grid-template-columns:repeat(2,auto);gap:12px 22px;} .ph-name {font-size:1.7rem;} .ph-av .av {width:72px;height:72px;}}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -491,7 +540,9 @@ def nice_map(m):
 
 def profile_header(r):
     over = r.side == "over"
-    why = html.escape(str(getattr(r, "reason", "") or ""), quote=True)
+    why = html.escape(str(getattr(r, "why", "") or ""), quote=True)
+    qual = (f'<div class="ph-q ok">✓ Qualified +EV pick · confidence {r.tier}</div>' if r.tier != "-" else
+            f'<div class="ph-q" title="{why}">Model edge only — not a qualified pick{" · " + why if why else ""}</div>')
     conf = (f"Conf {r.tier}" if r.tier != "-" else
             '<span class="nr" title="Confidence tiers (A/B/C) are only given to lines that pass every +EV rule '
             f'(min edge, sample size, data checks). This line does not{": " + why if why else ""}.">Not rated</span>')
@@ -505,8 +556,8 @@ def profile_header(r):
             f'<span class="scope">{r.maps_label}</span></div><div class="ph-nums">'
             f'<div><div class="ph-k">Model P({r.side})</div><div class="v">{r.p_side:.1%}</div></div>'
             f'<div><div class="ph-k">Breakeven</div><div class="v">{r.breakeven:.1%}</div></div>'
-            f'<div><div class="ph-k">Edge</div><div class="v {"pos" if r.edge > 0 else ""}">{r.edge:+.1%}</div></div>'
-            f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div></div></div>')
+            f'<div><div class="ph-k">Edge</div><div class="v {"pos" if r.edge > 0 and r.tier != "-" else ""}">{r.edge:+.1%}</div></div>'
+            f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div>{qual}</div></div>')
 
 
 OVERC = ("#22c55e", "#15803d", "#14532d")
@@ -607,47 +658,143 @@ def player_detail(r, i, scope):
         bym = h.groupby("map_name").agg(maps_n=("kills", "size"), avg_k=("kills", "mean"), avg_hs=("headshots", "mean"),
                                         kpr_hist=("kpr", "mean"), hs_hist=("hs_pct", "mean"))
         mp = mp.merge(bym, left_on="map", right_index=True, how="left").sort_values("p_played", ascending=False)
-        allm = {"map": "All maps", "maps_n": len(h), "avg_k": h.kills.mean(), "avg_hs": h.headshots.mean(),
-                "kpr_hist": h.kpr.mean(), "hs_hist": h.hs_pct.mean()}
         w = mp.p_played / mp.p_played.sum()
-        allm.update(kills=(w * mp.kills).sum(), headshots=(w * mp.headshots).sum(), kpr=(w * mp.kpr).sum())
-        mp = pd.concat([mp, pd.DataFrame([allm])], ignore_index=True).assign(map=lambda x: x["map"].map(nice_map))
-        mp = mp.assign(p_played=mp.p_played * 100, hs_hist=mp.hs_hist * 100, maps_n=mp.maps_n.fillna(0))
-        fmt = {"p_played": "{:.0f}%", "kills": "{:.1f}", "headshots": "{:.1f}", "kpr": "{:.2f}", "maps_n": "{:.0f}",
-               "avg_k": "{:.1f}", "avg_hs": "{:.1f}", "kpr_hist": "{:.2f}", "hs_hist": "{:.0f}%"}
-        N = st.column_config.NumberColumn
-        hist = ("avg_k", "avg_hs", "kpr_hist", "hs_hist")
-        for c in hist:
-            mp[c] = ["–" if pd.isna(x) else fmt.get(c, "{:.1f}").format(x) for x in mp[c]]
-        st.dataframe(mp[["map", "p_played", "kills", "headshots", "kpr", "maps_n", "avg_k", "avg_hs", "kpr_hist", "hs_hist"]]
-                     .style.format({k: f for k, f in fmt.items() if k not in hist}, na_rep="–"),
-                     hide_index=True, width="stretch", column_config={
-                         "map": "Map", "p_played": st.column_config.ProgressColumn("P(played)", format="%.0f%%", min_value=0, max_value=100,
-                                                                                    help="Chance this map is played in the series (map-pick model + P(map 3))"),
-                         "kills": st.column_config.Column("Pred kills", help="Model expected kills on this map if it is played"),
-                         "headshots": st.column_config.Column("Pred HS", help="Model expected headshots on this map if it is played"),
-                         "kpr": st.column_config.Column("Model KPR"), "maps_n": st.column_config.Column("Maps played", help="Last 3 months, tier 1-2"),
-                         "avg_k": st.column_config.Column("Avg kills"), "avg_hs": st.column_config.Column("Avg HS"),
-                         "kpr_hist": st.column_config.Column("KPR"), "hs_hist": st.column_config.Column("HS %")})
-        st.caption(f"Predictions use this match's odds ({r.odds_source}); win prob on map 1 {mp.p_win.dropna().iloc[0]:.0%}. "
-                   "Right-hand columns are the player's actual averages on each map and across all maps.")
+        allm = dict(kills=(w * mp.kills).sum(), headshots=(w * mp.headshots).sum(), kpr=(w * mp.kpr).sum(), maps_n=len(h),
+                    avg_k=h.kills.mean(), avg_hs=h.headshots.mean(), kpr_hist=h.kpr.mean(), hs_hist=h.hs_pct.mean())
+        st.markdown(map_table(mp, allm, d["spec"].best_of), unsafe_allow_html=True)
+        st.caption(f"Model projections use this match's odds ({r.odds_source}); win prob on map 1 {mp.p_win.dropna().iloc[0]:.0%}. "
+                   "P(played) is per map and is not normalised: a series plays 2-3 maps, so the column sums to the expected map count.")
     else:
-        st.caption("Map predictions are not available for this line.")
-    st.markdown('<div class="sect">Last 5 matches</div>', unsafe_allow_html=True)
-    lm = h[h.match_id.isin(h.match_id.drop_duplicates().head(5))]
-    tr, orr = lm.team_rounds.astype("Int64").astype(str), lm.opp_rounds.astype("Int64").astype(str)
-    lm = lm.assign(day=pd.to_datetime(lm.date).dt.strftime("%b %d"), score=tr + "–" + orr, res=np.where(lm.won == 1, "W", "L"),
-                   mapn=lm.map_name.map(nice_map), hs_pct=(lm.hs_pct * 100).fillna(0))
-    N = st.column_config.NumberColumn
-    st.dataframe(lm[["day", "opponent", "map_number", "mapn", "score", "res", "kills", "headshots", "hs_pct", "adr", "rating"]],
-                 hide_index=True, width="stretch", column_config={
-                     "day": "Date", "opponent": "Opponent", "map_number": N("#", format="%d"), "mapn": "Map", "score": "Score",
-                     "res": "W/L", "kills": N("K", format="%d"), "headshots": N("HS", format="%d"), "hs_pct": N("HS %", format="%.0f%%"),
-                     "adr": N("ADR", format="%.0f"), "rating": N("Rating (bo3)", format="%.2f", help="bo3.gg player rating (its own scale)")})
-    with st.expander("By opponent (last 3 months)"):
-        st.dataframe(h.groupby("opponent").agg(maps=("kills", "size"), kills=("kills", "mean"), hs=("headshots", "mean"),
-                                                kpr=("kpr", "mean"), hs_pct=("hs_pct", "mean")).round(2)
-                     .sort_values("maps", ascending=False).head(15), width="stretch")
+        st.markdown(pp_empty("Map predictions are unavailable for this line (no match specification was priced)."), unsafe_allow_html=True)
+    match_history(r, h, scope)
+    opponent_table(h)
+
+
+def pp_tip(label, text):
+    return f'<span class="pp-tip" title="{html.escape(text, quote=True)}" tabindex="0">{label}</span>'
+
+
+def pp_na(text="Unavailable"):
+    return f'<span class="pp-na" title="{html.escape(text, quote=True)}">–</span>'
+
+
+def pp_num(x, f, missing="Unavailable"):
+    return pp_na(missing) if x is None or pd.isna(x) else f.format(x)
+
+
+def pp_empty(msg):
+    return f'<div class="pp-empty">{html.escape(msg)}</div>'
+
+
+def pp_pbar(p, hl):
+    return (f'<div class="pp-pb{" hl" if hl else ""}" role="img" aria-label="{p:.0%} chance this map is played">'
+            f'<div class="pp-pbt"><i style="width:{min(p, 1) * 100:.0f}%"></i></div><span>{p:.0%}</span></div>')
+
+
+def pp_wl(won):
+    if won is None:
+        return '<span class="pp-wl t" title="Series level">–</span>'
+    return f'<span class="pp-wl {"w" if won else "l"}" title="{"Win" if won else "Loss"}">{"W" if won else "L"}</span>'
+
+
+def pp_delta(pred, hist, n, what):
+    if pd.isna(hist) or pd.isna(pred) or n < 3 or not hist or abs(pred - hist) / hist < 0.1:
+        return ""
+    up = pred > hist
+    return (f'<i class="pp-dl {"up" if up else "dn"}" title="Model projects {abs(pred - hist):.1f} {"more" if up else "fewer"} {what} '
+            f'than his {n}-map average on this map">{"▲" if up else "▼"}</i>')
+
+
+def pp_head(cols, groups=None):
+    g = "".join(f'<th colspan="{n}" class="{c}">{t}</th>' for t, n, c in groups) if groups else ""
+    return (f'<thead>{"<tr class=grp>" + g + "</tr>" if g else ""}<tr>'
+            + "".join(f'<th class="{c}">{t}</th>' for t, c in cols) + "</tr></thead>")
+
+
+TIPS = {"pp": "Chance this map is played in the series: map-pick model plus P(map 3). Per map, so several maps can be likely at once.",
+        "pk": "Model expected kills on this map if it is played, given the match odds.",
+        "ph": "Model expected headshots on this map if it is played.",
+        "mk": "Model kills per round on this map.",
+        "n": "Player maps on this map in the last 3 months (tier 1-2).",
+        "kpr": "Kills per round: kills / rounds played, averaged over his maps here.",
+        "hs": "Headshot %: headshot kills / kills, averaged over his maps here."}
+
+
+def map_table(mp, allm, best_of):
+    top = set(mp.head(1 if best_of == 1 else 2)["map"])
+    head = pp_head([("Map", "l"), (pp_tip("P(played)", TIPS["pp"]), "l"), (pp_tip("Kills", TIPS["pk"]), "g-m"), (pp_tip("HS", TIPS["ph"]), ""),
+                    (pp_tip("KPR", TIPS["mk"]), ""), (pp_tip("Maps", TIPS["n"]), "g-h"), ("Avg kills", ""), ("Avg HS", ""),
+                    (pp_tip("KPR", TIPS["kpr"]), ""), (pp_tip("HS %", TIPS["hs"]), "")],
+                   [("", 2, ""), ("Model projections", 3, "g-m"), ("Historical performance · last 3 months", 5, "g-h")])
+    rows = []
+    for x in mp.itertuples():
+        n, hl = int(x.maps_n) if pd.notna(x.maps_n) else 0, x.map in top
+        miss = f"No {nice_map(x.map)} maps for this player in the last 3 months"
+        tag = '<b class="pp-lk">likely</b>' if hl else ""
+        rows.append(f'<tr class="{"hl" if hl else ""}"><td class="l mapc">{nice_map(x.map)}{tag}</td><td class="l">{pp_pbar(x.p_played, hl)}</td>'
+                    f'<td class="g-m">{x.kills:.1f}{pp_delta(x.kills, x.avg_k, n, "kills")}</td>'
+                    f'<td>{x.headshots:.1f}{pp_delta(x.headshots, x.avg_hs, n, "headshots")}</td><td>{pp_num(x.kpr, "{:.2f}")}</td>'
+                    f'<td class="g-h">{n}</td><td>{pp_num(x.avg_k, "{:.1f}", miss)}</td><td>{pp_num(x.avg_hs, "{:.1f}", miss)}</td>'
+                    f'<td>{pp_num(x.kpr_hist, "{:.2f}", miss)}</td><td>{pp_num(x.hs_hist, "{:.0%}", miss)}</td></tr>')
+    a = allm
+    exp = pp_tip(f"exp. {mp.p_played.sum():.2f} maps", "Expected number of maps played = sum of P(played)")
+    rows.append(f'<tr class="tot"><td class="l mapc">All maps</td><td class="l">{exp}</td>'
+                f'<td class="g-m">{a["kills"]:.1f}</td><td>{a["headshots"]:.1f}</td><td>{pp_num(a["kpr"], "{:.2f}")}</td>'
+                f'<td class="g-h">{a["maps_n"]}</td><td>{pp_num(a["avg_k"], "{:.1f}")}</td><td>{pp_num(a["avg_hs"], "{:.1f}")}</td>'
+                f'<td>{pp_num(a["kpr_hist"], "{:.2f}")}</td><td>{pp_num(a["hs_hist"], "{:.0%}")}</td></tr>')
+    legend = ('<div class="pp-note"><b class="pp-lk">likely</b> most probable maps · <i class="pp-dl up">▲</i><i class="pp-dl dn">▼</i> '
+              'model differs from his average on that map by 10%+ (3+ maps) · hover headers for definitions</div>')
+    return f'<div class="pp-tw"><table class="pp-tbl">{head}<tbody>{"".join(rows)}</tbody></table></div>{legend}'
+
+
+def match_history(r, h, scope):
+    st.markdown('<div class="sect">Match history</div>', unsafe_allow_html=True)
+    if h.empty:
+        st.markdown(pp_empty("No tier 1-2 matches for this player in the last 3 months."), unsafe_allow_html=True)
+        return
+    c1, c2 = st.columns([2, 3])
+    nsel = c1.segmented_control("Series", ["5", "10", "20", "All"], default="5", key=f"mh_n_{scope}_{r.name}") or "5"
+    opps = ["All opponents"] + list(h.opponent.drop_duplicates())
+    osel = c2.selectbox("Opponent", opps, key=f"mh_o_{scope}_{r.name}")
+    g0 = h if osel == "All opponents" else h[h.opponent == osel]
+    ids = g0.match_id.drop_duplicates()
+    shown = ids if nsel == "All" else ids.head(int(nsel))
+    cols = [("#", ""), ("Map", "l"), ("Score", ""), ("W/L", "c"), ("K", ""), ("HS", ""), ("HS %", ""), ("ADR", ""),
+            (pp_tip("Rating", "bo3.gg player rating (its own scale)"), "")]
+    out = [f'<div class="pp-note">Showing {len(shown)} of {len(ids)} series{"" if osel == "All opponents" else " vs " + html.escape(osel)}'
+           ' · newest first · click a series to show its maps</div>',
+           '<div class="pp-mhh"><span></span><span>Date</span><span>Opponent</span><span>Series</span><span class="r hm">Maps</span>'
+           '<span class="r hm">K</span><span class="r hm">HS</span><span class="r hm">Rating</span></div>']
+    for k, mid in enumerate(shown):
+        g = g0[g0.match_id == mid].sort_values("map_number")
+        mw = int(g.won.sum())
+        ml = len(g) - mw
+        rows = "".join(
+            f'<tr><td>{int(x.map_number)}</td><td class="l">{nice_map(x.map_name)}</td>'
+            f'<td>{pp_num(x.team_rounds, "{:.0f}")}–{pp_num(x.opp_rounds, "{:.0f}")}</td><td class="c">{pp_wl(x.won == 1)}</td>'
+            f'<td>{int(x.kills)}</td><td>{int(x.headshots)}</td><td>{pp_num(x.hs_pct, "{:.0%}")}</td><td>{pp_num(x.adr, "{:.0f}")}</td>'
+            f'<td>{pp_num(x.rating, "{:.2f}")}</td></tr>' for x in g.itertuples())
+        out.append(f'<details class="pp-mh"{" open" if k == 0 else ""}><summary><span class="sd">{pd.Timestamp(g.date.max()):%b %d}</span>'
+                   f'<span class="so">vs {html.escape(str(g.opponent.iloc[0]))}</span>'
+                   f'<span>{pp_wl(None if mw == ml else mw > ml)} {mw}–{ml}</span><span class="r hm">{len(g)}</span>'
+                   f'<span class="r hm"><b>{int(g.kills.sum())}</b></span><span class="r hm"><b>{int(g.headshots.sum())}</b></span>'
+                   f'<span class="r hm">{pp_num(g.rating.mean(), "{:.2f}")}</span></summary>'
+                   f'<div class="pp-tw"><table class="pp-tbl sm">{pp_head(cols)}<tbody>{rows}</tbody></table></div></details>')
+    st.markdown("".join(out), unsafe_allow_html=True)
+
+
+def opponent_table(h):
+    if h.empty:
+        return
+    t = h.groupby("opponent").agg(maps=("kills", "size"), kills=("kills", "mean"), hs=("headshots", "mean"),
+                                   kpr=("kpr", "mean"), hs_pct=("hs_pct", "mean")).sort_values("maps", ascending=False).head(15)
+    rows = "".join(f'<tr><td class="l">{html.escape(str(o))}</td><td>{x.maps}</td><td>{x.kills:.1f}</td><td>{x.hs:.1f}</td>'
+                   f'<td>{pp_num(x.kpr, "{:.2f}")}</td><td>{pp_num(x.hs_pct, "{:.0%}")}</td></tr>' for o, x in zip(t.index, t.itertuples()))
+    head = pp_head([("Opponent", "l"), ("Maps", ""), ("Avg kills", ""), ("Avg HS", ""), (pp_tip("KPR", TIPS["kpr"]), ""), (pp_tip("HS %", TIPS["hs"]), "")])
+    st.markdown('<div class="sect">Opponent breakdown</div>'
+                f'<details class="pp-mh"><summary class="one"><span class="so">By opponent · last 3 months</span>'
+                f'<span class="r">{len(t)} opponents · most maps first</span></summary>'
+                f'<div class="pp-tw"><table class="pp-tbl sm">{head}<tbody>{rows}</tbody></table></div></details>', unsafe_allow_html=True)
 
 
 @st.dialog("Player panel", width="large")
