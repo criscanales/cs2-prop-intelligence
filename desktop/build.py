@@ -23,6 +23,7 @@ args = [
     "--collect-all", "plotly",
     "--collect-data", "lightgbm",
     "--collect-binaries", "lightgbm",
+    "--collect-data", "cv2",  # Haar face cascade used for portrait framing
     "--copy-metadata", "streamlit",
     "--collect-submodules", "cs2model",
     "--collect-submodules", "webview",
