@@ -8,14 +8,27 @@ the model, flags +EV picks and evaluates correlated slips. Ships as a Streamlit 
 - LightGBM + negative-binomial kill model, conditional beta-binomial headshot model, Platt calibration on a held-out window
 - Exact analytic single-leg P(over/under); seeded, cached Monte Carlo for correlated multi-leg slips
 - Live lines from PrizePicks and Underdog; match / map / rounds / overtime odds from Pinnacle's guest API and Thunderpick (via bo3.gg)
-- Dashboard: +EV play cards, sortable full board, player panel (series chart, hit rates, map predictions), manual slip builder,
-  pick / result / CLV tracking, CSV / JSON export, auto-refresh when lines change
+- Dashboard: +EV play cards with match start times (US Eastern), sortable full board, manual slip builder (Power / Flex
+  multipliers), pick / result / CLV tracking, CSV / JSON export
+- Player Panel: profile header that separates model edge from qualified picks, Recent Series stacked M1+M2 chart vs the line,
+  L5 / L10 / L15 / H2H / All historical hit rates, Map Predictions (model vs history), per-map comparison, match history
+  grouped by series, opponent breakdown
+- Broadcast-style player portraits: per-photo face framing (OpenCV) on a charcoal backdrop, default crop as fallback
+- Auto-updates while open: lines and odds every 2 minutes, newly finished bo3.gg results every hour
+- Windows and macOS desktop app (download from GitHub Releases)
 - Chronological backtest with Brier, log loss, MAE, pinball loss and calibration tables
+
+## Screenshots
+| Dashboard | Full board |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Board](docs/screenshots/board.png) |
+| **Player Panel** | **Recent Series vs the line** |
+| ![Player Panel](docs/screenshots/player_panel.png) | ![Recent Series](docs/screenshots/recent_series.png) |
 
 ## Architecture
 ```
 cs2model/
-  scraper/     bo3.gg history crawler, PrizePicks / Underdog lines, Pinnacle / Thunderpick odds
+  scraper/     bo3.gg history crawler, PrizePicks / Underdog lines, Pinnacle / Thunderpick odds, portrait framing
   features/    rolling player / team / map features (prior maps only)
   training/    model training, calibration, backtest
   inference/   predictor, analytic pricing (analytic.py), match simulation (simulate.py)
@@ -24,7 +37,7 @@ cs2model/
   dashboard/   Streamlit app
   pipeline.py  end-to-end slate run;  cli.py  command line entry point;  desktop.py  desktop launcher
 config/        settings.yaml (filters, Kelly, simulation), payouts.yaml (pick'em multipliers)
-desktop/       PyInstaller build script;  tests/  unit tests
+desktop/       PyInstaller build script;  tests/  unit tests;  .github/workflows/desktop.yml  Windows / macOS app builds
 ```
 Generated data (`data/`: crawl cache, history, tracking DB) and trained models (`models/`) are not committed; rebuild them with the commands below.
 
@@ -40,7 +53,7 @@ python -m cs2model.cli train      # fit models into models/
 streamlit run cs2model/dashboard/app.py   # dashboard on http://localhost:8501
 python -m cs2model.desktop        # same dashboard in a desktop window
 python -m pytest -q               # unit tests
-ruff check cs2model               # lint
+ruff check cs2model tests --select E,F,W --ignore E501   # lint
 ```
 
 ## Original notes
@@ -65,6 +78,10 @@ The multipliers in this file are used as-is (`verified: true`); edit them if you
 
 ## Desktop app (Windows / macOS)
 
+**Download:** grab `CS2Props-windows.zip` or `CS2Props-mac.zip` from the
+[latest release](https://github.com/criscanales/cs2-prop-intelligence/releases/latest), unzip it and double-click
+`CS2 Props.exe` (Windows) or `CS2 Props.app` (macOS).
+
 `python -m cs2model.desktop` opens the dashboard in its own native window (pywebview). If no native webview is
 available, it falls back to your browser.
 
@@ -75,7 +92,7 @@ pip install -r requirements.txt pyinstaller==6.11.1 pywebview==5.3.2
 python desktop/build.py        # Windows -> dist/CS2 Props/CS2 Props.exe, macOS -> dist/CS2 Props.app
 ```
 
-Or push the repo to GitHub and run the `desktop-build` workflow (Actions tab). It builds both and uploads zips.
+Or run the `desktop-build` workflow (Actions tab), which also runs on every `v*` tag. It builds both and uploads zips.
 
 The packaged app keeps its data, models and editable config in `~/CS2Props` (Windows: `C:\Users\<you>\CS2Props`).
 On first launch it offers **Download data and train**. Unsigned builds:
