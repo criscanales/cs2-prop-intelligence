@@ -1,6 +1,13 @@
 """Turn today's prop lines + match odds into calibrated over/under probabilities, edges and
 simulated hit indicators (for slips)."""
+import hashlib
 import logging
+import os
+import pickle
+import time
+import zlib
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import get_context
 from dataclasses import dataclass
 
 import joblib
@@ -13,6 +20,7 @@ from ..names import norm_player, team_similarity
 from ..parlay.engine import load_yaml, single_breakeven
 from ..scraper.bo3_history import HIST_PATH
 from ..training.train import MODEL_DIR
+from . import analytic as A
 from . import distribution as D
 from .simulate import MatchSpec, PlayerSpec, leg_totals, simulate_match
 
@@ -26,12 +34,15 @@ class Models:
     hs: lgb.Booster
     calibrators: dict
     art: dict
+    version: str = ""
 
     @classmethod
     def load(cls, d=MODEL_DIR):
         import json
+        files = ("kills_lgbm.txt", "hs_lgbm.txt", "calibrators.joblib", "artifacts.json")
+        version = hashlib.sha1(b"".join((d / f).read_bytes() for f in files)).hexdigest()[:12]
         return cls(lgb.Booster(model_file=str(d / "kills_lgbm.txt")), lgb.Booster(model_file=str(d / "hs_lgbm.txt")),
-                   joblib.load(d / "calibrators.joblib"), json.loads((d / "artifacts.json").read_text()))
+                   joblib.load(d / "calibrators.joblib"), json.loads((d / "artifacts.json").read_text()), version)
 
     def calibrate(self, stat, n_maps, p):
         c = self.calibrators.get(f"{stat}_{'map' if n_maps == 1 else 'series'}")
@@ -44,6 +55,7 @@ class Predictor:
         self.hist["date"] = pd.to_datetime(self.hist["date"], utc=True)
         self.m = models or Models.load()
         self.settings = settings or load_yaml("settings.yaml")
+        self._payouts_fixed = payouts is not None
         self.payouts = payouts or load_yaml("payouts.yaml")
         h = self.hist.sort_values("date")
         last = h.groupby("player_id").tail(1)
@@ -57,9 +69,20 @@ class Predictor:
         top = tt[tt.tier.isin(self.settings["tiers"])]
         self.team_counts = top.team_id.value_counts()
         self._feat_hist = None
+        self._rcache, self._feat_cache, self._price_cache, self._sim_cache = {}, {}, {}, {}
+        self.hist_version = f"{len(self.hist)}:{self.hist.date.max()}:{int(self.hist.game_id.sum())}"
+        self.tnames = self.teams.set_index("team_id").team.to_dict()
+        self.lgb_threads = 0
+        self.timings = {}
 
     # ---------- name resolution
     def resolve_team(self, name):
+        k = ("team", name)
+        if k not in self._rcache:
+            self._rcache[k] = self._resolve_team(name)
+        return self._rcache[k]
+
+    def _resolve_team(self, name):
         if not name:
             return None
         sims = self.teams.team.map(lambda t: team_similarity(t, name))
@@ -69,6 +92,12 @@ class Predictor:
         return int(cands.sort_values("date").team_id.iloc[-1])
 
     def resolve_player(self, name, team=None):
+        k = ("player", name, team)
+        if k not in self._rcache:
+            self._rcache[k] = self._resolve_player(name, team)
+        return self._rcache[k]
+
+    def _resolve_player(self, name, team=None):
         n = norm_player(name)
         c = self.players[(self.players.norm == n) | (self.players.slug_norm == n)]
         if c.empty:
@@ -129,11 +158,141 @@ class Predictor:
             out.append(Y)
         return pd.concat(out, ignore_index=True)
 
+    # ---------- per-match stages (cached; heavy stages can run in worker processes)
+    def _context(self, a, b, lns, books):
+        tnames = self.tnames
+        odds = _find_odds(books, tnames.get(a), tnames.get(b))
+        bo = max(max(x.maps) for x, _, _ in lns)
+        best_of = odds.best_of if odds else (3 if bo <= 3 else 5)
+        p_map = {}
+        if odds:
+            flip = team_similarity(odds.team1, tnames[a]) < team_similarity(odds.team2, tnames[a])
+            for k, v in odds.p_map_team1.items():
+                p_map[k] = 1 - v if flip else v
+        players = {(pid, tid) for _, pid, tid in lns}
+        players |= {(p, a) for p in self.roster(a)} | {(p, b) for p in self.roster(b)}
+        seen = {}  # drop players listed on both sides (roster noise)
+        for p, t in sorted(players):
+            seen.setdefault(p, t)
+        players = sorted(seen.items())
+        meta = {"best_of": best_of, "p_map_team1": float(np.mean(list(p_map.values()))) if p_map else np.nan,
+                "tier": "b", "event_type": None}
+        key = f"{a}-{b}"
+        fut = pd.DataFrame(self._future_rows(key, a, b, tnames, players, meta))
+        legs = sorted({(str(pid), ln.stat, tuple(ln.maps)) for ln, pid, _ in lns})
+        line_keys = frozenset((ln.source, ln.player, ln.stat, tuple(ln.maps), ln.line, ln.odds_type) for ln, _, _ in lns)
+        fkey = (self.hist_version, key, tuple(players), best_of, round(meta["p_map_team1"], 4) if p_map else None)
+        okey = repr((sorted(p_map.items()), best_of, odds.rounds_ladder if odds else None, odds.p_overtime if odds else None))
+        return {"key": key, "a": a, "b": b, "lns": lns, "odds": odds, "p_map": p_map, "best_of": best_of,
+                "players": players, "fut": fut, "fkey": fkey, "legs": legs, "line_keys": line_keys,
+                "pkey": (fkey, tuple(legs), self.m.version, okey)}
+
+    def _features(self, ctxs):
+        """One feature pass over history for all new matches (disjoint players/teams per pass), cached."""
+        todo = [c for c in ctxs if c["fkey"] not in self._feat_cache]
+        while todo:
+            batch, rest, used_p, used_t = [], [], set(), set()
+            for c in todo:
+                ps, ts = {p for p, _ in c["players"]}, {c["a"], c["b"]}
+                if ps & used_p or ts & used_t:
+                    rest.append(c)
+                    continue
+                batch.append(c)
+                used_p |= ps
+                used_t |= ts
+            F = build_features(self.hist, pd.concat([c["fut"] for c in batch], ignore_index=True))
+            F = F[F.future]
+            for c in batch:
+                self._feat_cache[c["fkey"]] = F[F.match_id == c["key"]].reset_index(drop=True)
+            todo = rest
+        for c in ctxs:
+            c["F"] = self._feat_cache[c["fkey"]]
+
+    def _price(self, job):
+        """Model predict + exact single-leg pmfs for one match."""
+        t0 = time.perf_counter()
+        F, a, b, odds, best_of = job["F"], job["a"], job["b"], job["odds"], job["best_of"]
+        p_map = dict(job["p_map"])
+        if not p_map:
+            pe = float(F[F.team_id == a].p_win_elo.mean())
+            p_map = {k: pe for k in range(1, 4)}
+        maps = self.active_maps
+        w = self.map_weights(a, b)
+        X = self._map_overrides(F, maps)
+        X["kpr_hat"] = np.exp(self.m.kills.predict(X[FEATURES], raw_score=True, num_threads=self.lgb_threads))
+        X["hs_hat"] = np.clip(np.exp(self.m.hs.predict(X[FEATURES], raw_score=True, num_threads=self.lgb_threads)), 0.05, 0.95)
+        rounds = {}
+        for j in range(1, min(best_of, 3) + 1):
+            pj = p_map.get(j, p_map.get(1, 0.5))
+            rounds[j] = D.rounds_dist(self.m.art["rounds_table"], 1 - abs(2 * pj - 1),
+                                      (odds.rounds_ladder.get(j) if odds else None) or None,
+                                      odds.p_overtime.get(j) if odds else None)
+        pspecs = []
+        for pid, tid in F[["player_id", "team_id"]].itertuples(index=False):
+            sub = X[X.player_id == pid]
+            pspecs.append(PlayerSpec(str(pid), 1 if tid == a else 2, dict(zip(sub.map_name, sub.kpr_hat)),
+                                     dict(zip(sub.map_name, sub.hs_hat)), self.m.art["alpha"], self.m.art["rho"]))
+        spec = MatchSpec(job["key"], best_of, maps, list(w), p_map, rounds, self.m.art["win_ratio"], pspecs)
+        t1 = time.perf_counter()
+        by_key, cache = {ps.key: ps for ps in pspecs}, {}
+        pmfs = {(pk, stat, mp): A.leg_pmf(by_key[pk], spec, stat, mp, cache) for pk, stat, mp in job["legs"]}
+        return {"spec": spec, "p_map": p_map, "rounds": rounds, "pmfs": pmfs,
+                "timings": {"model_predict": t1 - t0, "analytic": time.perf_counter() - t1}}
+
+    def ensure_sims(self, reqs, seed=7):
+        """{match: (ctx, n)} -> simulated outcome matrices with at least n draws. Cached on
+        match + lines + model version + match spec; a fixed per-match seed, and top-ups append draws."""
+        T, out, jobs, keys = self.timings, {}, [], []
+        for mk, (c, n) in reqs.items():
+            spec = self._price_cache[c["pkey"]]["spec"]
+            skey = (mk, c["line_keys"], self.m.version, self.hist_version, hashlib.sha1(pickle.dumps(spec)).hexdigest())
+            prev = self._sim_cache.get(skey)
+            if prev is not None and prev["_n"] >= n:
+                out[mk] = prev
+                T["sim_cache_hits"] = T.get("sim_cache_hits", 0) + 1
+                continue
+            jobs.append({"spec": spec, "n": n - (prev["_n"] if prev else 0), "seed": zlib.crc32(f"{mk}|{seed}".encode()),
+                         "state": prev["_state"] if prev else None})
+            keys.append((mk, skey, prev))
+        t0 = time.perf_counter()
+        for (mk, skey, prev), new in zip(keys, self._map(_sim_job, jobs)):
+            sim = new if prev is None else _append_sim(prev, new)
+            self._sim_cache[skey] = out[mk] = sim
+        T["simulate"] = T.get("simulate", 0) + time.perf_counter() - t0
+        T["matches_simulated"] = T.get("matches_simulated", 0) + len(jobs)
+        T["sims_drawn"] = T.get("sims_drawn", 0) + sum(j["n"] for j in jobs)
+        return out
+
+    def _n_workers(self):
+        w = int(self.settings.get("workers", 0))
+        return w if w > 0 else max(1, min(4, (os.cpu_count() or 2) - 1))
+
+    def _map(self, fn, jobs):
+        global _WORKER
+        if not jobs:
+            return []
+        w = self._n_workers()
+        if w > 1 and len(jobs) >= int(self.settings.get("parallel_min_jobs", 3)):
+            try:
+                return list(_get_pool(w, self).map(fn, jobs))
+            except Exception as e:  # noqa: BLE001  any pool failure falls back to the serial path
+                log.warning("parallel pricing failed (%s); running serially", e)
+                _shutdown_pool()
+        prev, _WORKER = _WORKER, self
+        try:
+            return [fn(j) for j in jobs]
+        finally:
+            _WORKER = prev
+
     # ---------- main entry
     def build_slate(self, lines, books, n_sims=None, seed=7, con=None, now=None):
         """Returns (slate DataFrame, hit matrix dict {row_id: bool array for recommended side}, details)."""
         n_sims = n_sims or self.settings["n_sims"]
-        rng = np.random.default_rng(seed)
+        T = self.timings = dict.fromkeys(("resolve_filter", "features", "price_matches_wall", "model_predict", "analytic", "rows",
+                                          "simulate", "matches_priced_fresh", "matches_simulated", "sims_drawn", "sim_cache_hits"), 0.0)
+        if not self._payouts_fixed:
+            self.payouts = load_yaml("payouts.yaml")
+        t0 = time.perf_counter()
         groups = {}
         unmatched, seen_keys = [], set()
         now = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
@@ -167,56 +326,36 @@ class Predictor:
             key = tuple(sorted((t1, t2)))
             groups.setdefault(key, []).append((ln, pid, t1))
 
-        rows, details, sims = [], {}, {}
-        for (a, b), lns in groups.items():
-            odds = _find_odds(books, self.teams.set_index("team_id").team.get(a), self.teams.set_index("team_id").team.get(b))
-            tnames = self.teams.set_index("team_id").team.to_dict()
-            bo = max(max(x.maps) for x, _, _ in lns)
-            best_of = odds.best_of if odds else (3 if bo <= 3 else 5)
-            p_map = {}
-            if odds:
-                flip = team_similarity(odds.team1, tnames[a]) < team_similarity(odds.team2, tnames[a])
-                for k, v in odds.p_map_team1.items():
-                    p_map[k] = 1 - v if flip else v
-            players = {(pid, tid) for _, pid, tid in lns}
-            players |= {(p, a) for p in self.roster(a)} | {(p, b) for p in self.roster(b)}
-            # drop players listed on both sides (roster noise)
-            seen = {}
-            for p, t in sorted(players):
-                seen.setdefault(p, t)
-            players = sorted(seen.items())
-            meta = {"best_of": best_of, "p_map_team1": float(np.mean(list(p_map.values()))) if p_map else np.nan,
-                    "tier": "b", "event_type": None}
-            fut = pd.DataFrame(self._future_rows(f"{a}-{b}", a, b, tnames, players, meta))
-            F = build_features(self.hist, fut)
-            F = F[F.future].reset_index(drop=True)
-            if not p_map:
-                pe = float(F[F.team_id == a].p_win_elo.mean())
-                p_map = {k: pe for k in range(1, 4)}
-            maps = self.active_maps
-            w = self.map_weights(a, b)
-            X = self._map_overrides(F, maps)
-            X["kpr_hat"] = np.exp(self.m.kills.predict(X[FEATURES], raw_score=True))
-            X["hs_hat"] = np.clip(np.exp(self.m.hs.predict(X[FEATURES], raw_score=True)), 0.05, 0.95)
-            rounds = {}
-            for j in range(1, min(best_of, 3) + 1):
-                pj = p_map.get(j, p_map.get(1, 0.5))
-                rounds[j] = D.rounds_dist(self.m.art["rounds_table"], 1 - abs(2 * pj - 1),
-                                          (odds.rounds_ladder.get(j) if odds else None) or None,
-                                          odds.p_overtime.get(j) if odds else None)
-            pspecs = []
-            for (pid, tid) in players:
-                sub = X[X.player_id == pid]
-                pspecs.append(PlayerSpec(str(pid), 1 if tid == a else 2, dict(zip(sub.map_name, sub.kpr_hat)),
-                                         dict(zip(sub.map_name, sub.hs_hat)), self.m.art["alpha"], self.m.art["rho"]))
-            spec = MatchSpec(f"{a}-{b}", best_of, maps, list(w), p_map, rounds, self.m.art["win_ratio"], pspecs)
-            sim = simulate_match(spec, n_sims, rng)
-            sims[spec.key] = sim
-            Fi = F.set_index("player_id")
-            for ln, pid, tid in lns:
-                tot = leg_totals(sim, str(pid), ln.stat, ln.maps)
-                p_over_raw = float((tot > ln.line).mean())
-                p_push = float((tot == ln.line).mean())
+        T["resolve_filter"] += time.perf_counter() - t0
+        rows, details = [], {}
+        ctxs = [self._context(a, b, lns, books) for (a, b), lns in groups.items()]
+        by_match = {c["key"]: c for c in ctxs}
+        t0 = time.perf_counter()
+        self._features(ctxs)
+        T["features"] += time.perf_counter() - t0
+        t0 = time.perf_counter()
+        todo = [c for c in ctxs if c["pkey"] not in self._price_cache]
+        jobs = [{"key": c["key"], "a": c["a"], "b": c["b"], "F": c["F"], "p_map": c["p_map"], "best_of": c["best_of"],
+                 "odds": c["odds"], "legs": c["legs"]} for c in todo]
+        for c, out in zip(todo, self._map(_price_job, jobs)):
+            self._price_cache[c["pkey"]] = out
+            T["model_predict"] += out["timings"]["model_predict"]
+            T["analytic"] += out["timings"]["analytic"]
+        T["price_matches_wall"] += time.perf_counter() - t0
+        T["matches_priced_fresh"] = len(todo)
+        t0 = time.perf_counter()
+        for c in ctxs:
+            out = self._price_cache[c["pkey"]]
+            spec, p_map, rounds, a, odds = out["spec"], out["p_map"], out["rounds"], c["a"], c["odds"]
+            Fi = c["F"].set_index("player_id")
+            p_ot = float(np.mean([(rounds[j][0] > D.OT_ROUNDS) @ rounds[j][1] for j in rounds]))
+            p_m3 = A.p_map3(spec)
+            for ln, pid, tid in c["lns"]:
+                pmf = out["pmfs"][(str(pid), ln.stat, tuple(ln.maps))]
+                k = np.arange(len(pmf))
+                cdf = np.cumsum(pmf)
+                p_over_raw = float(pmf[k > ln.line].sum())
+                p_push = float(pmf[k == ln.line].sum())
                 p_over = self.m.calibrate(ln.stat, len(ln.maps), p_over_raw)
                 p_under = max(0.0, 1 - p_over - p_push)
                 f = Fi.loc[pid]
@@ -229,37 +368,112 @@ class Predictor:
                 side = "over" if e_over >= e_under else "under"
                 row = {
                     "id": len(rows), "source": ln.source, "player": ln.player, "player_id": pid, "team": ln.team,
+                    "team_id": tid, "opp_id": c["b"] if tid == a else a,
                     "opponent": ln.opponent, "match": spec.key, "start_time": ln.start_time, "stat": ln.stat,
                     "maps": ln.maps, "maps_label": (f"Map {ln.maps[0]}" if len(ln.maps) == 1 else "Maps " + "+".join(map(str, ln.maps))), "line": ln.line,
-                    "odds_type": ln.odds_type, "model_mean": float(tot.mean()),
-                    "q10": float(np.quantile(tot, 0.1)), "q90": float(np.quantile(tot, 0.9)),
+                    "odds_type": ln.odds_type, "model_mean": float(k @ pmf),
+                    "q10": float(np.searchsorted(cdf, 0.1)), "q90": float(np.searchsorted(cdf, 0.9)),
                     "p_over": p_over, "p_under": p_under, "p_over_raw": p_over_raw, "side": side,
                     "p_push": p_push, "p_side": c_over if side == "over" else c_under, "breakeven": be_over if side == "over" else be_under,
                     "n_maps": int(f.n_maps), "tenure": int(f.tenure), "role_shift": float(f.role_shift) if f.role_shift == f.role_shift else 0.0,
                     "kpr_10": float(f.kpr_10) if f.kpr_10 == f.kpr_10 else np.nan, "hs_pct_10": float(f.hs_pct_10) if f.hs_pct_10 == f.hs_pct_10 else np.nan,
                     "opp_dpr": float(f.opp_dpr) if f.opp_dpr == f.opp_dpr else np.nan,
-                    "p_map_win": float(np.mean([p_map[k] if tid == a else 1 - p_map[k] for k in p_map])),
-                    "p_ot": float(np.mean([(rounds[j][0] > D.OT_ROUNDS) @ rounds[j][1] for j in rounds])),
-                    "p_map3": float(sim["_played"][:, 2].mean()) if sim["_played"].shape[1] > 2 else 0.0,
-                    "odds_source": odds.source if odds else "elo",
+                    "p_map_win": float(np.mean([p_map[j] if tid == a else 1 - p_map[j] for j in p_map])),
+                    "p_ot": p_ot, "p_map3": p_m3, "odds_source": odds.source if odds else "elo",
                 }
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1
                 rows.append(row)
-                hit = (tot > ln.line) if side == "over" else (tot < ln.line)
-                push = tot == ln.line
-                if push.any():  # voided leg ~ resolved at the conditional rate
-                    hit = hit | (push & (rng.random(len(tot)) < row["p_side"]))
-                details[row["id"]] = {"totals": tot, "hit": hit}
+                details[row["id"]] = {"pmf": pmf}
         slate = pd.DataFrame(rows)
+        T["rows"] += time.perf_counter() - t0
         if not slate.empty:
             slate = apply_rules(slate, self.settings, con)
-            for rid, d in details.items():
-                d["hit"] = _thin(d["hit"], slate.loc[rid, "p_side"], rng)
+            # Monte Carlo only where slips can be built: matches with at least one +EV leg.
+            n0 = int(self.settings.get("n_sims_initial", 20000))
+            n_full = max(n0, int(n_sims))
+            need = {}
+            for mk, g in slate[slate.plus_ev].groupby("match"):
+                # same-match legs lean on the simulated correlation, so those matches get the full count
+                need[mk] = n_full if g.groupby("source").size().max() >= 2 else n0
+            sims = self.ensure_sims({mk: (by_match[mk], n) for mk, n in need.items()}, seed)
+            slate["n_sims"] = slate.match.map(lambda m: sims[m]["_n"] if m in sims else 0)
+            for rid in slate.index[slate.n_sims > 0]:
+                r = slate.loc[rid]
+                tot = leg_totals(sims[r.match], str(r.player_id), r.stat, r.maps)
+                rrng = np.random.default_rng(zlib.crc32(f"{r.match}|{r.source}|{r.player_id}|{r.stat}|{r.maps}|{r.line}|{seed}".encode()))
+                hit = (tot > r.line) if r.side == "over" else (tot < r.line)
+                push = tot == r.line
+                if push.any():  # voided leg ~ resolved at the conditional rate
+                    hit = hit | (push & (rrng.random(len(tot)) < r.p_side))
+                details[rid].update(totals=tot, hit=_thin(hit, r.p_side, rrng))
         return slate, details, pd.DataFrame(unmatched, columns=SKIP_COLS)
 
 
 D_PRIOR = 0.68
+
+# ---------- worker processes: each loads history + models once and runs LightGBM single-threaded
+_WORKER = None
+_POOL, _POOL_SIG = None, None
+
+
+def _init_worker(settings, payouts):
+    global _WORKER
+    _WORKER = Predictor(settings=settings, payouts=payouts)
+    _WORKER.lgb_threads = 1
+
+
+def _get_pool(n, pred):
+    global _POOL, _POOL_SIG
+    sig = (n, pred.m.version, pred.hist_version)
+    if _POOL is None or _POOL_SIG != sig:
+        _shutdown_pool()
+        # spawn re-imports the parent's __main__ in each worker; under `streamlit run` that is the app
+        # script, so start every worker now behind a blank __main__.
+        import sys
+        import types
+        main = sys.modules.get("__main__")
+        sys.modules["__main__"] = types.ModuleType("__main__")
+        try:
+            _POOL = ProcessPoolExecutor(n, mp_context=get_context("spawn"), initializer=_init_worker,
+                                        initargs=(pred.settings, pred.payouts))
+            list(_POOL.map(_noop, [0.5] * n))
+        finally:
+            sys.modules["__main__"] = main
+        _POOL_SIG = sig
+    return _POOL
+
+
+def _noop(t):
+    time.sleep(t)
+
+
+def _shutdown_pool():
+    global _POOL, _POOL_SIG
+    if _POOL is not None:
+        _POOL.shutdown(wait=False, cancel_futures=True)
+    _POOL, _POOL_SIG = None, None
+
+
+def _price_job(job):
+    return _WORKER._price(job)
+
+
+def _sim_job(job):
+    rng = np.random.default_rng(job["seed"])
+    if job["state"] is not None:
+        rng.bit_generator.state = job["state"]
+    sim = simulate_match(job["spec"], job["n"], rng)
+    out = {k: (v if k == "_played" else {s: a.astype(np.int16) for s, a in v.items()}) for k, v in sim.items()}
+    out["_n"], out["_state"] = job["n"], rng.bit_generator.state
+    return out
+
+
+def _append_sim(a, b):
+    out = {k: (np.concatenate([a[k], b[k]]) if k == "_played" else {s: np.concatenate([a[k][s], b[k][s]]) for s in a[k]})
+           for k in a if not k.startswith("_") or k == "_played"}
+    out["_n"], out["_state"] = a["_n"] + b["_n"], b["_state"]
+    return out
 
 
 def list_index(m):

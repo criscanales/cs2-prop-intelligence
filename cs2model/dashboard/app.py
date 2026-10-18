@@ -2,6 +2,8 @@
 import html
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # `streamlit run` only adds the script's own dir
@@ -13,6 +15,9 @@ import streamlit as st
 
 from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
+from cs2model.inference.predict import Predictor
+from cs2model.scraper.bo3_history import DATA as HDATA
+from cs2model.scraper.bo3_history import HIST_PATH, team_logos
 from cs2model.scraper.lines import fetch_all_lines
 from cs2model.tracking import store
 from cs2model.training.train import MODEL_DIR
@@ -22,6 +27,7 @@ st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
 html, body, .stApp, .stMarkdown, button, input {font-family: Inter, system-ui, sans-serif;}
 .block-container {padding-top: 4.75rem; max-width: 1600px;}
+.logo {width:18px;height:18px;object-fit:contain;vertical-align:-4px;margin:0 4px 0 0;}
 header[data-testid="stHeader"] {background: rgba(11,15,20,0.94); backdrop-filter: blur(6px); border-bottom: 1px solid #1f2937;}
 div[data-testid="stTabs"] [role="tablist"] {position: sticky; top: 3.75rem; z-index: 60; background: #0b0f14; padding-top: 6px;}
 .age {display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;font-size:0.75rem;font-weight:700;}
@@ -76,18 +82,74 @@ if not (MODEL_DIR / "kills_lgbm.txt").exists():
         st.rerun()
     st.stop()
 
+# ---------------- background pricing: the page renders immediately, the slate fills in when done
+@st.cache_resource
+def shared_predictor(hist_mtime):
+    return Predictor()
+
+
+@st.cache_data(ttl=3600)
+def load_logos():
+    f = HDATA / "team_logos.json"
+    if not f.exists():
+        team_logos()
+    return {int(k): v for k, v in json.loads(f.read_text()).items()} if f.exists() else {}
+
+
+def start_pricing(pred):
+    job = {"done": False, "res": None, "err": None, "t0": time.time()}
+
+    def work():
+        try:
+            job["res"] = run_slate(pred)
+        except Exception as e:  # noqa: BLE001  surfaced in the UI
+            job["err"] = e
+        finally:
+            job["done"] = True
+    threading.Thread(target=work, daemon=True).start()
+    return job
+
+
+@st.fragment(run_every=1.5)
+def poll():
+    j = st.session_state.get("job")
+    if j is None or j["done"]:
+        st.rerun(scope="app")
+    st.caption(f"Pricing… {time.time() - j['t0']:.0f}s")
+
+
+LOGOS = load_logos()
+
+
+def logo(team_id):
+    u = LOGOS.get(int(team_id)) if team_id == team_id else None
+    return f'<img class="logo" src="{html.escape(u)}"/>' if u else ""
+
+
 # ---------------- sidebar
 with st.sidebar:
     st.markdown("### CS2 Props +EV")
     auto = st.toggle("Auto-update on new lines", value=True)
     every = max(60, int(settings.get("auto_refresh_sec", 120)))
     forced = st.session_state.pop("force_refresh", False)
-    if st.button("Refresh lines & odds", type="primary", width="stretch") or forced or "res" not in st.session_state:
-        prev = st.session_state.get("res")
-        with st.spinner("Pulling lines/odds and simulating matches..."):
-            st.session_state.res = run_slate(prev["predictor"] if prev else None)
-        st.session_state.changes = diff_sig(prev["sig"], st.session_state.res["sig"]) if prev else None
-    res = st.session_state.res
+    job = st.session_state.get("job")
+    clicked = st.button("Refresh lines & odds", type="primary", width="stretch")
+    if (clicked or forced or ("res" not in st.session_state and job is None)) and not (job and not job["done"]):
+        st.session_state.job = job = start_pricing(shared_predictor(HIST_PATH.stat().st_mtime))
+    if job is not None and job["done"]:
+        st.session_state.job = None
+        if job["err"] is not None:
+            st.error(f"Pricing failed: {job['err']}")
+        else:
+            prev = st.session_state.get("res")
+            st.session_state.res = job["res"]
+            st.session_state.changes = diff_sig(prev["sig"], job["res"]["sig"]) if prev else None
+        job = None
+    pricing = job is not None
+    if pricing:
+        st.info("Pricing in progress… stakes and slips are hidden until it finishes.")
+        poll()
+    res = st.session_state.get("res")
 
     @st.fragment(run_every=every if auto else None)
     def watch():
@@ -98,6 +160,8 @@ with st.sidebar:
         except Exception as e:  # noqa: BLE001  source hiccup: keep the current slate
             st.caption(f"Line check failed: {e}")
             return
+        if "res" not in st.session_state or st.session_state.get("job"):
+            return
         d = diff_sig(st.session_state.res["sig"], line_sig(lines))
         if d["added"] or d["moved"] or d["removed"]:
             st.toast(f"Board changed: {len(d['added'])} new · {len(d['moved'])} moved · {len(d['removed'])} pulled. Repricing...")
@@ -105,8 +169,9 @@ with st.sidebar:
             st.rerun(scope="app")
         st.caption(f"Checked {pd.Timestamp.now(tz='UTC'):%H:%M:%S} UTC · next check in {every // 60} min")
     watch()
-    st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} matches with odds")
-    for e in res["errors"]:
+    if res is not None:
+        st.caption(f"Updated {res['ts']:%Y-%m-%d %H:%M} UTC · {res['n_lines']} lines · {res['n_books']} matches with odds")
+    for e in (res or {}).get("errors", []):
         st.warning(f"Source unavailable: {e}")
     unverified = [p for p, c in payouts.items() if not c.get("verified")]
     st.subheader("Filters")
@@ -121,6 +186,18 @@ with st.sidebar:
     settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings["bankroll"]), 50.0)
     settings["kelly_fraction"] = st.slider("Kelly fraction", 0.05, 1.0, float(settings["kelly_fraction"]), 0.05)
     settings["daily_exposure_pct"] = st.slider("Daily max exposure", 0.01, 0.5, float(settings["daily_exposure_pct"]), 0.01)
+
+if res is None:
+    st.markdown("## CS2 Props +EV")
+    st.warning("Pricing in progress (first load). This is the raw board; edges, stakes and slips appear when pricing finishes.")
+    try:
+        raw, _ = fetch_all_lines(("underdog", "prizepicks"))
+        st.dataframe(pd.DataFrame([{"platform": ln.source, "player": ln.player, "team": ln.team, "opponent": ln.opponent,
+                                    "stat": ln.stat, "maps": "+".join(map(str, ln.maps)), "line": ln.line, "odds type": ln.odds_type}
+                                   for ln in raw]), hide_index=True, width="stretch", height=600)
+    except Exception as e:  # noqa: BLE001
+        st.caption(f"Line fetch failed: {e}")
+    st.stop()
 
 slate, details, pred = res["slate"], res["details"], res["predictor"]
 if slate.empty:
@@ -195,13 +272,16 @@ with tab_slate:
             plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
             new = f'<span class="badge b-new">{html.escape(r.chg)}</span>' if r.chg else ""
             cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
-<div class="mt">{html.escape(r.team)} vs {html.escape(r.opponent)} · {r.maps_label}</div>
+<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div>
 <div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
 <span class="badge b-edge" title="{HELP['edge']}">edge {r.edge:+.1%}</span><span class="badge b-tier">P {r.p_side:.0%} · mean {r.model_mean:.1f}</span>
 {plat}<span class="badge b-tier" title="{HELP['tier']}">conf {r.tier}</span>{new}</div>""")
         st.markdown('<div class="sect">Top +EV plays</div><div class="cards">' + "".join(cards) + "</div>", unsafe_allow_html=True)
     st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
-    cols = ["chg", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
+    if pricing:
+        st.warning("Repricing in progress: showing the previous slate until the new one is ready.")
+    view = view.assign(logo=view.team_id.map(lambda t: LOGOS.get(int(t))))
+    cols = ["chg", "logo", "player", "team", "opponent", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
             "edge", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
 
@@ -220,6 +300,7 @@ with tab_slate:
                                 "ev": st.column_config.Column("EV", help=HELP["ev"]),
                                 "tier": st.column_config.Column("tier", help=HELP["tier"]),
                                 "why": st.column_config.Column("why", help=HELP["why"], width="large"),
+                                "logo": st.column_config.ImageColumn("", width="small"),
                                 "chg": st.column_config.Column("chg", help="NEW = line added, a→b = line moved since last update")})
     st.caption("Green = +EV over · Red = +EV under · Gray = no qualifying edge. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
@@ -247,11 +328,11 @@ with tab_player:
     if len(opts):
         pick = st.selectbox("Line", opts.index, format_func=lambda i: opts[i])
         r = slate.loc[pick]
-        tot = details[pick]["totals"]
+        pmf = details[pick]["pmf"]
         a, b = st.columns([3, 2])
         with a:
-            vals, cnt = np.unique(tot, return_counts=True)
-            fig = go.Figure(go.Bar(x=vals, y=cnt / cnt.sum(), marker_color=["#22c55e" if v > r.line else "#ef4444" for v in vals]))
+            vals = np.flatnonzero(pmf > 5e-4)
+            fig = go.Figure(go.Bar(x=vals, y=pmf[vals], marker_color=["#22c55e" if v > r.line else "#ef4444" for v in vals]))
             fig.add_vline(x=r.line, line_dash="dash", line_color="#e5e7eb", annotation_text=f"line {r.line}")
             fig.add_vline(x=r.model_mean, line_color="#60a5fa", annotation_text=f"mean {r.model_mean:.1f}")
             fig.update_layout(template="plotly_dark", height=360, margin=dict(l=10, r=10, t=30, b=10),
@@ -291,7 +372,7 @@ def leg_cards(ids):
         r = slate.loc[i]
         col = "#22c55e" if r.side == "over" else "#ef4444"
         cards.append(f"""<div class="card" style="--c:{col}"><div class="pl">{html.escape(r.player)}</div>
-<div class="mt">{html.escape(r.team)} vs {html.escape(r.opponent)} · {r.maps_label}</div>
+<div class="mt">{logo(r.team_id)}{html.escape(r.team)} vs {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div>
 <div class="pk">{r.side.upper()} {r.line:g} {r.stat}</div>
 <span class="badge b-tier" title="Mean of the model's predictive distribution">mean {r.model_mean:.1f}</span>
 <span class="badge b-tier" title="Calibrated model probability of this side (a push voids the leg)">P(side) {r.p_side:.1%}</span>
@@ -339,77 +420,81 @@ SLIP_HELP = {"Win prob": "Probability all legs hit (correlated simulation, calib
              "Hits (0/1/2…)": "Probability of each number of legs hitting."}
 
 with tab_parlay:
-    plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True)
-    verified = bool(payouts.get(plat, {}).get("verified"))
-    avail = E.plays(plat, payouts)
-    mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], horizontal=True)
-    if mode.startswith("Auto"):
-        chosen = st.multiselect("Play types", list(avail), list(avail))
-        with st.spinner("Searching slips on correlated simulations..."):
-            slips = build_slips(slate, details, plat, settings, payouts, plays={k: avail[k] for k in chosen})
-        if slips.empty:
-            st.info("No +EV slips from the current +EV legs on this platform.")
-        else:
-            top = slips.iloc[0]
-            slip_summary(f"Best slip: {top.play}", top.p_all, E.payout_vector(avail[top.play]).max(), top.ev, top.stake, verified)
-            leg_cards(top.leg_ids)
-            slip_warnings(top.leg_ids, top.ev, top.ev_indep)
-            show = slips[list(SLIP_COLS)].rename(columns=SLIP_COLS)
-            if not verified:
-                show = show.drop(columns=["Kelly (full)", "Stake"])
-            st.dataframe(show.style.format({k: v for k, v in SLIP_FMT.items() if k in show}), hide_index=True, width="stretch",
-                         height=420, column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
-            st.caption("6-leg slips must pass the sanity check (still +EV under independence with every leg 2pp worse).")
-            st.subheader("EV by legs and Power vs Flex (best slip each)")
-            st.bar_chart(slips.groupby("play").ev.max().sort_values())
-            e1, e2, e3 = st.columns(3)
-            e1.download_button("Slips CSV", slips.to_csv(index=False), "cs2_slips.csv")
-            e2.download_button("Slips JSON", json.dumps(slips.to_dict("records"), default=str), "cs2_slips.json")
-            if e3.button("Log recommended slips + picks"):
-                p = slate[slate.plus_ev]
-                store.log_picks(p)
-                con = store.connect()
-                idmap = {}
-                for row in con.execute("SELECT id, source, player, stat, maps, side, line FROM picks"):
-                    idmap[tuple(row[1:])] = row[0]
-                for s in slips[slips.recommended].itertuples():
-                    legs = [idmap.get((slate.loc[i, "source"], slate.loc[i, "player"], slate.loc[i, "stat"],
-                                       "+".join(map(str, slate.loc[i, "maps"])), slate.loc[i, "side"], slate.loc[i, "line"]))
-                            for i in s.leg_ids]
-                    store.log_slip(plat, s.play, legs, s.p_all, s.ev, s.stake, s.hit_dist, con)
-                st.success("Logged")
+    if pricing:
+        st.info("Slips and stakes are hidden while pricing is in progress.")
     else:
-        cand = slate[slate.source == plat].sort_values("edge", ascending=False)
-        labels = cand.apply(lambda r: f"{r.player} {r.side} {r.line} {r.stat} {r.maps_label} (edge {r.edge:+.1%})", axis=1)
-        sel = st.multiselect("Legs (side = model's side)", cand.id.tolist(), format_func=lambda i: labels[i], max_selections=6)
-        if sel:
-            leg_cards(sel)
-        rows = []
-        if len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
-            H = np.column_stack([details[i]["hit"] for i in sel])
-            for name, play in avail.items():
-                if play["legs"] != len(sel):
-                    continue
-                r = E.evaluate(H, range(len(sel)), play)
-                f = E.kelly_fraction(r["hit_dist"], play)
-                rows.append({"Play": name, "Win prob": r["p_all"], "Payout": E.payout_vector(play).max(), "EV": r["ev"],
-                             "EV if independent": r["ev_indep"], "Correlation boost": r["corr_ratio"],
-                             "Stake": min(settings["kelly_fraction"] * f, stake_cap(settings, payouts, plat)) * settings["bankroll"],
-                             "Hits (0/1/2…)": hit_labels(r["hit_dist"])})
-        best = max(rows, key=lambda x: x["EV"]) if rows else None
-        if best:
-            slip_summary(f"Best play for these legs: {best['Play']}", best["Win prob"], best["Payout"], best["EV"], best["Stake"],
-                         verified)
-        if sel:
-            slip_warnings(sel, best["EV"] if best else None, best["EV if independent"] if best else None)
-        if rows:
-            t = pd.DataFrame(rows)
-            if not verified:
-                t = t.drop(columns=["Stake"])
-            st.dataframe(t.style.format({k: v for k, v in SLIP_FMT.items() if k in t}), hide_index=True, width="stretch",
-                         column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
-        elif len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
-            st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
+        plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True)
+        verified = bool(payouts.get(plat, {}).get("verified"))
+        avail = E.plays(plat, payouts)
+        mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], horizontal=True)
+        if mode.startswith("Auto"):
+            chosen = st.multiselect("Play types", list(avail), list(avail))
+            with st.spinner("Searching slips on correlated simulations..."):
+                slips = build_slips(slate, details, plat, settings, payouts, plays={k: avail[k] for k in chosen})
+            if slips.empty:
+                st.info("No +EV slips from the current +EV legs on this platform.")
+            else:
+                top = slips.iloc[0]
+                slip_summary(f"Best slip: {top.play}", top.p_all, E.payout_vector(avail[top.play]).max(), top.ev, top.stake, verified)
+                leg_cards(top.leg_ids)
+                slip_warnings(top.leg_ids, top.ev, top.ev_indep)
+                show = slips[list(SLIP_COLS)].rename(columns=SLIP_COLS)
+                if not verified:
+                    show = show.drop(columns=["Kelly (full)", "Stake"])
+                st.dataframe(show.style.format({k: v for k, v in SLIP_FMT.items() if k in show}), hide_index=True, width="stretch",
+                             height=420, column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
+                st.caption("6-leg slips must pass the sanity check (still +EV under independence with every leg 2pp worse).")
+                st.subheader("EV by legs and Power vs Flex (best slip each)")
+                st.bar_chart(slips.groupby("play").ev.max().sort_values())
+                e1, e2, e3 = st.columns(3)
+                e1.download_button("Slips CSV", slips.to_csv(index=False), "cs2_slips.csv")
+                e2.download_button("Slips JSON", json.dumps(slips.to_dict("records"), default=str), "cs2_slips.json")
+                if e3.button("Log recommended slips + picks"):
+                    p = slate[slate.plus_ev]
+                    store.log_picks(p)
+                    con = store.connect()
+                    idmap = {}
+                    for row in con.execute("SELECT id, source, player, stat, maps, side, line FROM picks"):
+                        idmap[tuple(row[1:])] = row[0]
+                    for s in slips[slips.recommended].itertuples():
+                        legs = [idmap.get((slate.loc[i, "source"], slate.loc[i, "player"], slate.loc[i, "stat"],
+                                           "+".join(map(str, slate.loc[i, "maps"])), slate.loc[i, "side"], slate.loc[i, "line"]))
+                                for i in s.leg_ids]
+                        store.log_slip(plat, s.play, legs, s.p_all, s.ev, s.stake, s.hit_dist, con)
+                    st.success("Logged")
+        else:
+            cand = slate[(slate.source == plat) & (slate.n_sims > 0)].sort_values("edge", ascending=False)
+            st.caption("Legs come from matches with at least one +EV leg (the matches simulated for slips).")
+            labels = cand.apply(lambda r: f"{r.player} {r.side} {r.line} {r.stat} {r.maps_label} (edge {r.edge:+.1%})", axis=1)
+            sel = st.multiselect("Legs (side = model's side)", cand.id.tolist(), format_func=lambda i: labels[i], max_selections=6)
+            if sel:
+                leg_cards(sel)
+            rows = []
+            if len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
+                H = np.column_stack([details[i]["hit"] for i in sel])
+                for name, play in avail.items():
+                    if play["legs"] != len(sel):
+                        continue
+                    r = E.evaluate(H, range(len(sel)), play)
+                    f = E.kelly_fraction(r["hit_dist"], play)
+                    rows.append({"Play": name, "Win prob": r["p_all"], "Payout": E.payout_vector(play).max(), "EV": r["ev"],
+                                 "EV if independent": r["ev_indep"], "Correlation boost": r["corr_ratio"],
+                                 "Stake": min(settings["kelly_fraction"] * f, stake_cap(settings, payouts, plat)) * settings["bankroll"],
+                                 "Hits (0/1/2…)": hit_labels(r["hit_dist"])})
+            best = max(rows, key=lambda x: x["EV"]) if rows else None
+            if best:
+                slip_summary(f"Best play for these legs: {best['Play']}", best["Win prob"], best["Payout"], best["EV"], best["Stake"],
+                             verified)
+            if sel:
+                slip_warnings(sel, best["EV"] if best else None, best["EV if independent"] if best else None)
+            if rows:
+                t = pd.DataFrame(rows)
+                if not verified:
+                    t = t.drop(columns=["Stake"])
+                st.dataframe(t.style.format({k: v for k, v in SLIP_FMT.items() if k in t}), hide_index=True, width="stretch",
+                             column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
+            elif len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
+                st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
 
 # ---------------- tracking
 with tab_track:

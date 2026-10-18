@@ -7,6 +7,7 @@ Endpoints (all public, discovered from the bo3.gg web app):
   /api/v1/tournaments?filter[tournaments.id][eq]=ID  event type (lan/online), tier
 """
 import argparse
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 
@@ -146,3 +147,31 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     df = crawl(a.days)
     print(f"wrote {len(df)} rows to {HIST_PATH}")
+
+
+def team_logos(write=True):
+    """{team_id: image_url} gathered from bo3 responses already in the disk cache (no extra requests)."""
+    import glob
+    out = {}
+
+    def walk(o):
+        if isinstance(o, dict):
+            url = o.get("image_url")
+            if isinstance(url, str) and "/uploads/team/" in url and o.get("id") is not None:
+                out[int(o["id"])] = url
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    for f in glob.glob(str(DATA / "cache" / "*" / "*.json")):
+        try:
+            txt = open(f, encoding="utf-8").read()
+            if "/uploads/team/" in txt:
+                walk(json.loads(txt))
+        except (OSError, ValueError):
+            continue
+    if write:
+        (DATA / "team_logos.json").write_text(json.dumps(out))
+    return out

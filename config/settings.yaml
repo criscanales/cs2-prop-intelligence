@@ -8,6 +8,9 @@ line_move_flag: 1.5       # line moved this many kills/HS since first seen => fl
 standin_tenure: 3         # fewer prior maps with current team => stand-in, excluded
 role_shift_flag: 0.18     # |opening-duel win share last5 - last20| above this => role change flag
 n_sims: 50000             # Monte Carlo draws for slips
+n_sims_initial: 20000   # Monte Carlo draws per slip-candidate match; topped up (appended) to n_sims when needed
+workers: 0              # pricing worker processes; 0 = auto (min(4, cores-1)), 1 = no parallelism
+parallel_min_jobs: 3    # only use workers when at least this many matches need work
 kelly_fraction: 0.25
 bankroll: 1000
 max_stake_pct: 0.03

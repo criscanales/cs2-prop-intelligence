@@ -55,6 +55,8 @@ def _wait(url, timeout=120):
 
 
 def main():
+    import multiprocessing
+    multiprocessing.freeze_support()  # frozen app: pricing worker processes re-enter here
     _setup_home()
     if "--serve" in sys.argv:
         serve(int(sys.argv[sys.argv.index("--serve") + 1]))

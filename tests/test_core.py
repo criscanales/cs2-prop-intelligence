@@ -258,3 +258,40 @@ def test_skip_record_and_reconcile():
     r = reconcile(3, slate, sk)
     assert r["balanced"] and r["by_reason"]["not enough tier-1/2 maps"] == 1
     assert r["per_platform"]["underdog"] == {"lines": 1, "priced_props": 1, "priced_matches": 1}
+
+
+def _toy_spec(bo=3):
+    from cs2model.inference.simulate import MatchSpec, PlayerSpec
+    maps = ["de_ancient", "de_anubis", "de_dust2", "de_inferno", "de_mirage", "de_nuke", "de_train"]
+    r = np.random.default_rng(0)
+    sup = np.arange(16, 31).astype(float)
+    pr = r.random(len(sup))
+    pr /= pr.sum()
+    ps = [PlayerSpec(f"p{i}", 1 + i % 2, dict(zip(maps, r.uniform(.55, .85, 7))), dict(zip(maps, r.uniform(.35, .6, 7))), .024, .014)
+          for i in range(2)]
+    return MatchSpec("x", bo, maps, list(r.dirichlet(np.ones(7) * 3)), {1: .6, 2: .55, 3: .58}, {1: (sup, pr)}, 1.27, ps)
+
+
+def test_analytic_leg_matches_monte_carlo():
+    from cs2model.inference import analytic as A, distribution as D
+    from cs2model.inference.simulate import leg_totals, simulate_match
+    spec = _toy_spec()
+    sim = simulate_match(spec, 200000, np.random.default_rng(1))
+    for stat, mp in (("kills", (1, 2)), ("headshots", (1,)), ("kills", (1, 2, 3)), ("kills", (3,))):
+        tot = leg_totals(sim, "p0", stat, mp)
+        pmf = A.leg_pmf(spec.players[0], spec, stat, mp)
+        assert abs(tot.mean() - D.mean(pmf)) < 0.1
+        for line in (np.floor(tot.mean()) - 2.5, np.floor(tot.mean()) + 0.5, np.floor(tot.mean()) + 3.5):
+            assert abs((tot > line).mean() - D.p_over(pmf, line)) < 0.006
+
+
+def test_sim_seed_and_append_topup():
+    from cs2model.inference.predict import _append_sim, _sim_job
+    spec = _toy_spec()
+    a = _sim_job({"spec": spec, "n": 2000, "seed": 11, "state": None})
+    b = _sim_job({"spec": spec, "n": 2000, "seed": 11, "state": None})
+    assert np.array_equal(a["p0"]["kills"], b["p0"]["kills"])  # fixed per-match seed
+    top = _append_sim(a, _sim_job({"spec": spec, "n": 3000, "seed": 11, "state": a["_state"]}))
+    assert top["_n"] == 5000 and top["p0"]["kills"].shape[0] == 5000
+    assert np.array_equal(top["p0"]["kills"][:2000], a["p0"]["kills"])  # earlier draws kept, not redrawn
+    assert not np.array_equal(top["p0"]["kills"][2000:4000], a["p0"]["kills"])  # new draws continue the stream

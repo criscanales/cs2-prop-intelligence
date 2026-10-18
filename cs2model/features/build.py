@@ -27,8 +27,25 @@ MAPS = ["de_ancient", "de_anubis", "de_dust2", "de_inferno", "de_mirage", "de_nu
         "de_train", "de_vertigo"]
 
 
+def _grp_roll(g, col, w, stat="sum", min_periods=1):
+    """Per-group rolling stat of the previous w rows (excludes the current row); vectorised."""
+    lag = g[col].shift(1)
+    r = getattr(lag.groupby(g.ngroup(), sort=False).rolling(w, min_periods=min_periods), stat)()
+    return r.reset_index(level=0, drop=True).reindex(lag.index)
+
+
+def _grp_ewm(g, col):
+    lag = g[col].shift(1)
+    r = lag.groupby(g.ngroup(), sort=False).ewm(halflife=EWM_HALFLIFE, ignore_na=True).mean()
+    return r.reset_index(level=0, drop=True).reindex(lag.index)
+
+
+def _grp_cumsum_lag(g, col):
+    return g[col].shift(1).fillna(0).groupby(g.ngroup(), sort=False).cumsum()
+
+
 def _roll_sum(g, col, w):
-    return g[col].transform(lambda s: s.shift(1).rolling(w, min_periods=1).sum())
+    return _grp_roll(g, col, w, "sum")
 
 
 def _player_features(df: pd.DataFrame) -> pd.DataFrame:
@@ -45,9 +62,9 @@ def _player_features(df: pd.DataFrame) -> pd.DataFrame:
         df[f"open_rate_{w}"] = op / r
         df[f"fk_share_{w}"] = fk / op.replace(0, np.nan)
         for c in ("rating", "adr", "kast"):
-            df[f"{c}_{w}"] = g[c].transform(lambda s: s.shift(1).rolling(w, min_periods=1).mean())
+            df[f"{c}_{w}"] = _grp_roll(g, c, w, "mean")
     def ew(c):
-        return g[c].transform(lambda s: s.shift(1).ewm(halflife=EWM_HALFLIFE, ignore_na=True).mean())
+        return _grp_ewm(g, c)
 
     kr, rr, hr = ew("kills"), ew("rounds"), ew("headshots")
     df["kpr_ewm"] = kr / rr
@@ -57,13 +74,13 @@ def _player_features(df: pd.DataFrame) -> pd.DataFrame:
     k20, r20, h20 = _roll_sum(g, "kills", 20), _roll_sum(g, "rounds", 20), _roll_sum(g, "headshots", 20)
     df["kpr_shrunk"] = (k20.fillna(0) + 120 * PRIOR_KPR) / (r20.fillna(0) + 120)
     df["hs_pct_shrunk"] = (h20.fillna(0) + 40 * PRIOR_HS) / (k20.fillna(0) + 40)
-    df["kills_sd_20"] = g["kills"].transform(lambda s: s.shift(1).rolling(20, min_periods=3).std())
-    df["rounds_20"] = g["rounds"].transform(lambda s: s.shift(1).rolling(20, min_periods=1).mean())
+    df["kills_sd_20"] = _grp_roll(g, "kills", 20, "std", 3)
+    df["rounds_20"] = _grp_roll(g, "rounds", 20, "mean")
     df["role_shift"] = (df["fk_share_5"] - df["fk_share_20"]).abs()
     # map-specific kill rate, shrunk toward the player's overall form
     gm = df.groupby(["player_id", "map_name"], sort=False)
-    mk = gm["kills"].transform(lambda s: s.shift(1).fillna(0).cumsum())
-    mr = gm["rounds"].transform(lambda s: s.shift(1).fillna(0).cumsum())
+    mk = _grp_cumsum_lag(gm, "kills")
+    mr = _grp_cumsum_lag(gm, "rounds")
     df["map_n"] = gm.cumcount()
     df["map_kpr"] = (mk + 60 * df["kpr_shrunk"]) / (mr + 60)
     df["tenure"] = df.groupby(["player_id", "team_id"], sort=False).cumcount()
@@ -116,17 +133,17 @@ def _elo(t: pd.DataFrame) -> pd.Series:
 def _team_features(t: pd.DataFrame) -> pd.DataFrame:
     t["elo"] = _elo(t)
     g = t.groupby("team_id", sort=False)
-    t["pace"] = g["rounds"].transform(lambda s: s.shift(1).rolling(20, min_periods=1).mean())
+    t["pace"] = _grp_roll(g, "rounds", 20, "mean")
     t["ot"] = (t["rounds"] > OT_ROUNDS).where(t["rounds"].notna())
-    t["ot_rate"] = g["ot"].transform(lambda s: s.astype(float).shift(1).rolling(20, min_periods=1).mean())
+    t["ot_rate"] = _grp_roll(t.assign(ot=t["ot"].astype(float)).groupby("team_id", sort=False), "ot", 20, "mean")
     t["dpr"] = _roll_sum(g, "team_deaths", 20) / _roll_sum(g, "rounds", 20) / 5
     t["kpr_team"] = _roll_sum(g, "team_kills", 20) / _roll_sum(g, "rounds", 20) / 5
     gm = t.groupby(["team_id", "map_name"], sort=False)
-    wins = gm["won"].transform(lambda s: s.shift(1).fillna(0).cumsum())
+    wins = _grp_cumsum_lag(gm, "won")
     n = gm.cumcount()
     t["map_wr"] = (wins + 2.5) / (n + 5)
-    md = gm["team_deaths"].transform(lambda s: s.shift(1).fillna(0).cumsum())
-    mr = gm["rounds"].transform(lambda s: s.shift(1).fillna(0).cumsum())
+    md = _grp_cumsum_lag(gm, "team_deaths")
+    mr = _grp_cumsum_lag(gm, "rounds")
     t["map_dpr"] = (md / 5 + 100 * t["dpr"].fillna(PRIOR_KPR)) / (mr + 100)
     return t
 
