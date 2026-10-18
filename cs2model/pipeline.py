@@ -40,10 +40,12 @@ def reconcile(n_lines, slate, skipped):
 
 
 def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sources=("pinnacle", "thunderpick"),
-              n_sims=None, log=True):
+              n_sims=None, log=True, on_lines=None):
     from .inference.predict import Predictor
     predictor = predictor or Predictor()
     lines, e1 = fetch_all_lines(line_sources)
+    if on_lines:
+        on_lines(lines)
     books, e2 = fetch_all_books(book_sources)
     con = store.connect()
     if log:

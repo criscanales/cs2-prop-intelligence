@@ -97,11 +97,11 @@ def load_logos():
 
 
 def start_pricing(pred):
-    job = {"done": False, "res": None, "err": None, "t0": time.time()}
+    job = {"done": False, "res": None, "err": None, "t0": time.time(), "lines": None, "shown": False}
 
     def work():
         try:
-            job["res"] = run_slate(pred)
+            job["res"] = run_slate(pred, on_lines=lambda ls: job.update(lines=ls))
         except Exception as e:  # noqa: BLE001  surfaced in the UI
             job["err"] = e
         finally:
@@ -113,7 +113,9 @@ def start_pricing(pred):
 @st.fragment(run_every=1.5)
 def poll():
     j = st.session_state.get("job")
-    if j is None or j["done"]:
+    if j is None or j["done"] or (j["lines"] is not None and not j["shown"]):
+        if j is not None and j["lines"] is not None:
+            j["shown"] = True
         st.rerun(scope="app")
     st.caption(f"Pricing… {time.time() - j['t0']:.0f}s")
 
@@ -190,13 +192,13 @@ with st.sidebar:
 if res is None:
     st.markdown("## CS2 Props +EV")
     st.warning("Pricing in progress (first load). This is the raw board; edges, stakes and slips appear when pricing finishes.")
-    try:
-        raw, _ = fetch_all_lines(("underdog", "prizepicks"))
+    raw = (st.session_state.get("job") or {}).get("lines")
+    if raw is None:
+        st.caption("Fetching lines…")
+    else:
         st.dataframe(pd.DataFrame([{"platform": ln.source, "player": ln.player, "team": ln.team, "opponent": ln.opponent,
                                     "stat": ln.stat, "maps": "+".join(map(str, ln.maps)), "line": ln.line, "odds type": ln.odds_type}
                                    for ln in raw]), hide_index=True, width="stretch", height=600)
-    except Exception as e:  # noqa: BLE001
-        st.caption(f"Line fetch failed: {e}")
     st.stop()
 
 slate, details, pred = res["slate"], res["details"], res["predictor"]
@@ -426,11 +428,17 @@ with tab_parlay:
         plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True)
         verified = bool(payouts.get(plat, {}).get("verified"))
         avail = E.plays(plat, payouts)
-        mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], horizontal=True)
+        mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], index=1, horizontal=True)
         if mode.startswith("Auto"):
             chosen = st.multiselect("Play types", list(avail), list(avail))
             with st.spinner("Searching slips on correlated simulations..."):
-                slips = build_slips(slate, details, plat, settings, payouts, plays={k: avail[k] for k in chosen})
+                # every Streamlit interaction reruns the whole script; only re-optimise when its inputs change
+                key = (str(res["ts"]), plat, tuple(chosen), json.dumps([settings, payouts], sort_keys=True, default=str))
+                cache = st.session_state.setdefault("slip_cache", {})
+                if key not in cache:
+                    cache.clear()
+                    cache[key] = build_slips(slate, details, plat, settings, payouts, plays={k: avail[k] for k in chosen})
+                slips = cache[key]
             if slips.empty:
                 st.info("No +EV slips from the current +EV legs on this platform.")
             else:
