@@ -204,3 +204,26 @@ def test_http_access_denied(monkeypatch):
     monkeypatch.setattr(http._session, "request", lambda *a, **k: R())
     with pytest.raises(http.AccessDenied):
         http.fetch_json("https://example.invalid/x", min_interval=0)
+
+
+def test_platt_calibration_smooth_and_monotone():
+    from cs2model.training.calibration import Platt
+    rng = np.random.default_rng(0)
+    p = rng.uniform(0.2, 0.8, 4000)
+    y = rng.random(4000) < (0.5 + 0.8 * (p - 0.5))  # overconfident raw probabilities
+    c = Platt().fit(p, y)
+    grid = np.linspace(0.1, 0.9, 50)
+    out = c.predict(grid)
+    assert np.all(np.diff(out) > 0)  # strictly monotone, no isotonic steps
+    assert out[-1] < 0.9 and out[0] > 0.1  # shrinks overconfidence
+    assert len(np.unique(out.round(4))) == 50
+
+
+def test_optimizer_one_leg_per_player():
+    rng = np.random.default_rng(1)
+    base = rng.random(20000)
+    H = np.column_stack([base < 0.7, base < 0.68, rng.random(20000) < 0.6])  # legs 0/1 same player
+    legs = [{"match": "m1", "player": "p1", "stat": "kills"}, {"match": "m1", "player": "p1", "stat": "headshots"},
+            {"match": "m2", "player": "p2", "stat": "kills"}]
+    for r in E.optimize(H, legs, _cfg()["power_2"], top_n=5):
+        assert not {0, 1} <= set(r["legs"])

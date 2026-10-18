@@ -27,7 +27,7 @@ if not (MODEL_DIR / "kills_lgbm.txt").exists():
 # ---------------- sidebar
 with st.sidebar:
     st.title("CS2 Props +EV")
-    if st.button("Refresh lines & odds", type="primary", use_container_width=True) or "res" not in st.session_state:
+    if st.button("Refresh lines & odds", type="primary", width="stretch") or "res" not in st.session_state:
         with st.spinner("Pulling lines/odds and simulating matches..."):
             st.session_state.res = run_slate(st.session_state.get("res", {}).get("predictor"))
     res = st.session_state.res
@@ -88,7 +88,7 @@ with tab_slate:
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"})
-    st.dataframe(sty, use_container_width=True, height=620, hide_index=True)
+    st.dataframe(sty, width="stretch", height=620, hide_index=True)
     st.caption("Green = +EV over · Red = +EV under · Gray = no qualifying edge. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
@@ -100,7 +100,7 @@ with tab_slate:
         st.success(f"Logged {len(picks)} picks")
     if len(res["unmatched"]):
         with st.expander("Unmatched lines"):
-            st.dataframe(res["unmatched"], hide_index=True, use_container_width=True)
+            st.dataframe(res["unmatched"], hide_index=True, width="stretch")
 
 # ---------------- player
 with tab_player:
@@ -118,7 +118,7 @@ with tab_player:
             fig.update_layout(template="plotly_dark", height=360, margin=dict(l=10, r=10, t=30, b=10),
                               title=f"{r.player} {r.stat} {r.maps_label}: predictive distribution",
                               xaxis_title=r.stat, yaxis_title="probability", bargap=0.05)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         with b:
             m = st.columns(2)
             m[0].metric("P(over)", f"{r.p_over:.1%}")
@@ -135,15 +135,15 @@ with tab_player:
         h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
         st.subheader("Last 20 maps")
         st.dataframe(h.head(20)[["date", "opponent", "map_name", "map_number", "rounds", "won", "kills", "headshots", "adr",
-                                 "kast", "rating", "tier"]], hide_index=True, use_container_width=True)
+                                 "kast", "rating", "tier"]], hide_index=True, width="stretch")
         s1, s2 = st.columns(2)
         agg = dict(maps=("kills", "size"), kills=("kills", "mean"), hs=("headshots", "mean"), kpr=("kpr", "mean"),
                    hs_pct=("hs_pct", "mean"))
         s1.subheader("By map")
-        s1.dataframe(h.groupby("map_name").agg(**agg).round(2).sort_values("maps", ascending=False), use_container_width=True)
+        s1.dataframe(h.groupby("map_name").agg(**agg).round(2).sort_values("maps", ascending=False), width="stretch")
         s2.subheader("By opponent")
         s2.dataframe(h.groupby("opponent").agg(**agg).round(2).sort_values("maps", ascending=False).head(15),
-                     use_container_width=True)
+                     width="stretch")
 
 # ---------------- parlays
 with tab_parlay:
@@ -163,7 +163,7 @@ with tab_parlay:
                           "matches", "kelly_full", "stake", "recommended"]]
             st.dataframe(show.style.format({"p_all": "{:.1%}", "ev": "{:+.1%}", "ev_indep": "{:+.1%}", "corr_ratio": "{:.2f}",
                                             "kelly_full": "{:.1%}", "stake": "${:.2f}"}),
-                         hide_index=True, use_container_width=True, height=420)
+                         hide_index=True, width="stretch", height=420)
             st.caption("ev_indep = EV if legs were independent; corr_ratio = P(all hit) / product of leg probabilities. "
                        "6-leg slips must pass sanity_ok (still +EV under independence with every leg 2pp worse).")
             st.subheader("EV by legs and Power vs Flex (best slip each)")
@@ -201,7 +201,7 @@ with tab_parlay:
                              "stake": min(settings["kelly_fraction"] * f, settings["max_stake_pct"]) * settings["bankroll"],
                              "hit dist": np.round(r["hit_dist"], 3).tolist()})
             if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+                st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
             else:
                 st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
 
@@ -222,10 +222,10 @@ with tab_track:
         fig = go.Figure([go.Scatter(x=cal.pred, y=cal.obs, mode="markers+lines", name="picks"),
                          go.Scatter(x=[0.4, 0.9], y=[0.4, 0.9], mode="lines", line_dash="dash", name="perfect")])
         fig.update_layout(template="plotly_dark", height=320, title="Live calibration", xaxis_title="model P", yaxis_title="hit rate")
-        st.plotly_chart(fig, use_container_width=True)
-        st.dataframe(p.sort_values("start_time", ascending=False), hide_index=True, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
+        st.dataframe(p.sort_values("start_time", ascending=False), hide_index=True, width="stretch")
         if len(s):
-            st.dataframe(s, hide_index=True, use_container_width=True)
+            st.dataframe(s, hide_index=True, width="stretch")
 
 # ---------------- model
 with tab_model:
@@ -239,16 +239,16 @@ with tab_model:
                          "pinball q10": v["pinball_0.1"], "pinball q90": v["pinball_0.9"], "Brier": v["brier"],
                          "LogLoss": v["logloss"], "picks": v["betting"]["n_picks"], "hit": v["betting"]["hit_rate"],
                          "ROI": v["betting"]["roi"]})
-    st.dataframe(pd.DataFrame(rows).round(4), hide_index=True, use_container_width=True)
+    st.dataframe(pd.DataFrame(rows).round(4), hide_index=True, width="stretch")
     a, b = st.columns(2)
     for col, stat in ((a, "kills"), (b, "headshots")):
         cal = pd.DataFrame(bt[f"calibration_{stat}"])
         fig = go.Figure([go.Scatter(x=cal.pred, y=cal.obs, mode="markers+lines", text=cal.n, name="test"),
                          go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line_dash="dash", name="perfect")])
         fig.update_layout(template="plotly_dark", height=320, title=f"Calibration ({stat}, test maps)")
-        col.plotly_chart(fig, use_container_width=True)
+        col.plotly_chart(fig, width="stretch")
     st.subheader("Edge buckets (LightGBM, test)")
     st.dataframe(pd.DataFrame([dict(target=k, **bk) for k, v in bt["models"]["lgbm"].items() for bk in v["betting"]["buckets"]]),
-                 hide_index=True, use_container_width=True)
+                 hide_index=True, width="stretch")
     st.subheader("Top features (kills, gain share)")
     st.bar_chart(pd.Series(bt["feature_importance_kills"]))

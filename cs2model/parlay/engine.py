@@ -108,9 +108,9 @@ def optimize(H, legs, play, top_n=10, beam=300, max_per_match=2, corr_penalty=0.
         for i in combo:
             L = legs[i]
             m[L["match"]] = m.get(L["match"], 0) + 1
-            if (L["player"], L["stat"]) in ps:
+            if L["player"] in ps:  # PrizePicks/Underdog allow one pick per player per entry
                 return False
-            ps.add((L["player"], L["stat"]))
+            ps.add(L["player"])
         return max(m.values()) <= max_per_match
 
     def score(r):
