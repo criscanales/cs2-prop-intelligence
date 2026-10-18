@@ -289,6 +289,10 @@ div[role="dialog"] {overflow-x:hidden;}
 .pc .top {gap:14px;} .pc .top > div, .pc .who > div {min-width:0;}
 .pc .bet {margin:10px 0 10px;}
 @media (max-width:640px) {.pc .av {width:50px;height:50px;}}
+.pp-df {color:var(--tx2);}
+.pp-mcs {display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center;margin:4px 0 10px;font-family:var(--fm);font-size:.85rem;color:var(--tx);}
+.pp-mcs > div {display:flex;align-items:center;gap:10px;} .pp-mcs .k {font-family:var(--fd);font-size:.68rem;letter-spacing:.12em;
+  text-transform:uppercase;color:var(--mut);} .pp-mcs b {font-weight:600;}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
@@ -669,10 +673,56 @@ def player_detail(r, i, scope):
         st.markdown(map_table(mp, allm, d["spec"].best_of), unsafe_allow_html=True)
         st.caption(f"Model projections use this match's odds ({r.odds_source}); win prob on map 1 {mp.p_win.dropna().iloc[0]:.0%}. "
                    "P(played) is per map and is not normalised: a series plays 2-3 maps, so the column sums to the expected map count.")
+        map_compare(r, mp, allm, h, scope)
     else:
         st.markdown(pp_empty("Map predictions are unavailable for this line (no match specification was priced)."), unsafe_allow_html=True)
     match_history(r, h, scope)
     opponent_table(h)
+
+
+def map_compare(r, mp, allm, h, scope):
+    st.markdown('<div class="sect">Map comparison</div>', unsafe_allow_html=True)
+    opts = list(mp["map"])
+    sel = st.segmented_control("Map", opts, default=opts[0], format_func=nice_map, key=f"mc_{scope}_{r.name}") or opts[0]
+    x, hm = mp[mp["map"] == sel].iloc[0], h[h.map_name == sel]
+    n, nm = len(hm), nice_map(sel)
+    miss = f"No {nm} maps for this player in the last 3 months"
+
+    def diff(m, v, f):
+        if pd.isna(m) or pd.isna(v):
+            return pp_na("Needs both a projection and history on this map")
+        return f'<span class="pp-df">{"▲" if m > v else "▼" if m < v else "="} {f.format(m - v)}</span>'
+
+    proj = [("Kills", x.kills, hm.kills.mean(), allm["avg_k"], "{:.1f}", "{:+.1f}"),
+            ("Headshots", x.headshots, hm.headshots.mean(), allm["avg_hs"], "{:.1f}", "{:+.1f}"),
+            (pp_tip("KPR", TIPS["kpr"]), x.kpr, hm.kpr.mean(), allm["kpr_hist"], "{:.2f}", "{:+.2f}")]
+    rows = [f'<tr><td class="l mapc">{lab}</td><td class="g-m">{pp_num(m, f)}</td><td class="g-h">{pp_num(v, f, miss)}</td>'
+            f'<td>{pp_num(b, f)}</td><td class="g-m">{diff(m, v, fd)}</td></tr>' for lab, m, v, b, f, fd in proj]
+    nop = pp_na("History only: the model does not project this")
+    for lab, v, b in [(pp_tip("HS %", TIPS["hs"]), hm.hs_pct.mean(), h.hs_pct.mean()), ("Map win %", hm.won.mean(), h.won.mean())]:
+        rows.append(f'<tr><td class="l mapc">{lab}</td><td class="g-m">{nop}</td><td class="g-h">{pp_num(v, "{:.0%}", miss)}</td>'
+                    f'<td>{pp_num(b, "{:.0%}")}</td><td class="g-m">{nop}</td></tr>')
+    head = pp_head([("Metric", "l"), (pp_tip("If played", TIPS["pk"]), "g-m"), (f"On {nm}", "g-h"), ("All maps", ""),
+                    (pp_tip("Model − map avg", f"Model projection minus his historical {nm} average"), "g-m")],
+                   [("", 1, ""), ("Model projection", 1, "g-m"), ("Historical · last 3 months", 2, "g-h"), ("Difference", 1, "g-m")])
+    small = ' <span class="pp-lk">small sample</span>' if 0 < n < 3 else ""
+    wins = int(hm.won.sum())
+    strip = (f'<div class="pp-mcs"><div><span class="k">P(played)</span>{pp_pbar(x.p_played, False)}</div>'
+             f'<div><span class="k">Maps on {nm}</span><b>{n}</b>{small}</div>'
+             f'<div><span class="k">Map record</span><b>{wins}–{n - wins}</b></div></div>')
+    out = [strip, f'<div class="pp-tw"><table class="pp-tbl sm">{head}<tbody>{"".join(rows)}</tbody></table></div>']
+    if n:
+        rec = "".join(f'<tr><td class="l">{pd.Timestamp(y.date):%b %d}</td><td class="l">{html.escape(str(y.opponent))}</td>'
+                      f'<td>{pp_num(y.team_rounds, "{:.0f}")}–{pp_num(y.opp_rounds, "{:.0f}")}</td><td class="c">{pp_wl(y.won == 1)}</td>'
+                      f'<td>{int(y.kills)}</td><td>{int(y.headshots)}</td><td>{pp_num(y.hs_pct, "{:.0%}")}</td>'
+                      f'<td>{pp_num(y.rating, "{:.2f}")}</td></tr>' for y in hm.head(5).itertuples())
+        rh = pp_head([("Date", "l"), ("Opponent", "l"), ("Score", ""), ("W/L", "c"), ("K", ""), ("HS", ""), ("HS %", ""),
+                      (pp_tip("Rating", "bo3.gg player rating (its own scale)"), "")])
+        out.append(f'<div class="pp-note">Last {min(n, 5)} of his {n} {nm} maps</div>'
+                   f'<div class="pp-tw"><table class="pp-tbl sm">{rh}<tbody>{rec}</tbody></table></div>')
+    else:
+        out.append(f'<div class="pp-note"></div>{pp_empty(miss + ", so only the model projection is available.")}')
+    st.markdown("".join(out), unsafe_allow_html=True)
 
 
 def pp_tip(label, text):
