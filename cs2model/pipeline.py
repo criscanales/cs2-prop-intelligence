@@ -29,6 +29,15 @@ def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sour
             "ts": datetime.now(timezone.utc)}
 
 
+def stake_cap(settings, payouts, platform):
+    ok = payouts.get(platform, {}).get("verified", False)
+    return settings["max_stake_pct"] if ok else min(settings["max_stake_pct"], settings.get("unverified_max_stake_pct", 0.005))
+
+
+def hit_labels(hit_dist):
+    return " · ".join(f"{k} hit{'s' if k != 1 else ''}: {p:.1%}" for k, p in enumerate(hit_dist))
+
+
 def build_slips(slate, details, platform, settings, payouts, max_legs_pool=20, plays=None):
     """Best slips per play type from +EV legs on one platform (correlation-aware Monte Carlo)."""
     pool = slate[(slate.source == platform) & slate.plus_ev].sort_values("edge", ascending=False).head(max_legs_pool)
@@ -41,7 +50,7 @@ def build_slips(slate, details, platform, settings, payouts, max_legs_pool=20, p
         for rank, r in enumerate(E.optimize(H, legs, play, top_n=settings["top_n_slips"],
                                             max_per_match=settings["max_legs_per_match"])):
             f = E.kelly_fraction(r["hit_dist"], play)
-            stake = min(settings["kelly_fraction"] * f, settings["max_stake_pct"]) * settings["bankroll"]
+            stake = min(settings["kelly_fraction"] * f, stake_cap(settings, payouts, platform)) * settings["bankroll"]
             ids = [legs[i]["id"] for i in r["legs"]]
             out.append({
                 "platform": platform, "play": name, "legs_n": play["legs"], "type": play["type"], "rank": rank + 1,
@@ -49,7 +58,7 @@ def build_slips(slate, details, platform, settings, payouts, max_legs_pool=20, p
                 "legs": " | ".join(f"{slate.loc[i, 'player']} {slate.loc[i, 'side'][0].upper()} {slate.loc[i, 'line']} "
                                    f"{slate.loc[i, 'stat'][:1].upper()}{'' if slate.loc[i, 'stat'] == 'kills' else 'S'}"
                                    for i in ids),
-                "p_all": r["p_all"], "hit_dist": r["hit_dist"].round(4).tolist(),
+                "p_all": r["p_all"], "hit_dist": r["hit_dist"].round(4).tolist(), "hits": hit_labels(r["hit_dist"]),
                 "max_payout": float(E.payout_vector(play).max()), "ev": r["ev"], "ev_indep": r["ev_indep"],
                 "corr_ratio": r["corr_ratio"], "heavy_corr": r["heavy_corr"],
                 "sanity_ok": E.sanity_check(H, r["legs"], play) if play["legs"] >= 6 else True,

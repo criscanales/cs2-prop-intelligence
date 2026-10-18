@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from cs2model.parlay import engine as E
-from cs2model.pipeline import build_slips, run_slate
+from cs2model.pipeline import build_slips, hit_labels, run_slate, stake_cap
 from cs2model.tracking import store
 from cs2model.training.train import MODEL_DIR
 
@@ -163,6 +163,9 @@ with tab_player:
 # ---------------- parlays
 with tab_parlay:
     plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True)
+    if not payouts.get(plat, {}).get("verified"):
+        st.warning(f"{plat} payouts unverified: stakes capped at {settings.get('unverified_max_stake_pct', 0.005):.1%} of bankroll "
+                   "until config/payouts.yaml has verified: true.")
     avail = E.plays(plat, payouts)
     mode = st.radio("Leg selection", ["Automatic (optimizer)", "Manual"], horizontal=True)
     if mode.startswith("Auto"):
@@ -174,7 +177,7 @@ with tab_parlay:
         else:
             top = slips.iloc[0]
             st.success(f"Best overall: {top.play} · EV {top.ev:+.1%} · P(all) {top.p_all:.1%} · stake ${top.stake:.2f}\n\n{top.legs}")
-            show = slips[["play", "rank", "legs", "p_all", "ev", "ev_indep", "corr_ratio", "heavy_corr", "sanity_ok",
+            show = slips[["play", "rank", "legs", "p_all", "ev", "ev_indep", "hits", "corr_ratio", "heavy_corr", "sanity_ok",
                           "matches", "kelly_full", "stake", "recommended"]]
             st.dataframe(show.style.format({"p_all": "{:.1%}", "ev": "{:+.1%}", "ev_indep": "{:+.1%}", "corr_ratio": "{:.2f}",
                                             "kelly_full": "{:.1%}", "stake": "${:.2f}"}),
@@ -216,10 +219,12 @@ with tab_parlay:
                 f = E.kelly_fraction(r["hit_dist"], play)
                 rows.append({"play": name, "P(all)": r["p_all"], "max payout": E.payout_vector(play).max(), "EV": r["ev"],
                              "EV if independent": r["ev_indep"], "corr ratio": r["corr_ratio"],
-                             "stake": min(settings["kelly_fraction"] * f, settings["max_stake_pct"]) * settings["bankroll"],
-                             "hit dist": np.round(r["hit_dist"], 3).tolist()})
+                             "stake": min(settings["kelly_fraction"] * f, stake_cap(settings, payouts, plat)) * settings["bankroll"],
+                             "hits": hit_labels(r["hit_dist"])})
             if rows:
-                st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+                st.dataframe(pd.DataFrame(rows).style.format({"P(all)": "{:.1%}", "max payout": "{:.2f}x", "EV": "{:+.1%}",
+                                                              "EV if independent": "{:+.1%}", "corr ratio": "{:.2f}",
+                                                              "stake": "${:.2f}"}), hide_index=True, width="stretch")
             else:
                 st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
 
