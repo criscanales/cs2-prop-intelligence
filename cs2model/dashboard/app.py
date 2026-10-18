@@ -284,6 +284,11 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 div[role="dialog"] {overflow-x:hidden;}
 @media (max-width:900px) {.pp-mhh, .pp-mh > summary {grid-template-columns:14px 56px 1fr 74px;} .pp-mhh .hm, .pp-mh .hm {display:none;}
   .ph-nums {grid-template-columns:repeat(2,auto);gap:12px 22px;} .ph-name {font-size:1.7rem;} .ph-av .av {width:72px;height:72px;}}
+.pc .av {width:58px;height:58px;border-radius:9px;object-position:50% 12%;}
+.pc .av.ini {font-size:1.45rem;}
+.pc .top {gap:14px;} .pc .top > div, .pc .who > div {min-width:0;}
+.pc .bet {margin:10px 0 10px;}
+@media (max-width:640px) {.pc .av {width:50px;height:50px;}}
 </style>""", unsafe_allow_html=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
