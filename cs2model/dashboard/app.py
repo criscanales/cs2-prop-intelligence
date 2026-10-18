@@ -225,9 +225,9 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .ss:hover {border-color:var(--line2);}
 .ss-h {display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
 .ss-h b {font-family:var(--fd);letter-spacing:.14em;font-size:.85rem;color:var(--tx);} .ss-h span {font-family:var(--fm);font-size:.7rem;color:var(--mut);}
-.ss-r {display:grid;grid-template-columns:70px auto 1fr;gap:8px;align-items:baseline;font-family:var(--fm);}
+.ss-r {display:grid;grid-template-columns:62px auto 1fr;gap:8px;align-items:baseline;font-family:var(--fm);}
 .ss-r .k {font-size:.7rem;color:var(--mut);font-family:Inter,sans-serif;} .ss-r .v {font-size:1.05rem;color:var(--tx);}
-.ss-r .f {font-size:.72rem;color:var(--tx2);text-align:right;} .ss-r .f.pos {color:#4ade80;} .ss-r .f.neg {color:#a3acb9;}
+.ss-r .f {font-size:.72rem;color:var(--tx2);text-align:right;white-space:nowrap;} .ss-r .f.pos {color:#4ade80;} .ss-r .f.neg {color:#a3acb9;}
 .ss-m {border-color:rgba(232,117,42,.45);background:linear-gradient(180deg,rgba(232,117,42,.07),var(--panel));}
 .nr {border-bottom:1px dotted var(--mut);cursor:help;}
 .ss-na {font-size:.78rem;color:var(--mut);padding:6px 0;}
@@ -494,7 +494,7 @@ def profile_header(r):
     why = html.escape(str(getattr(r, "reason", "") or ""), quote=True)
     conf = (f"Conf {r.tier}" if r.tier != "-" else
             '<span class="nr" title="Confidence tiers (A/B/C) are only given to lines that pass every +EV rule '
-            f'(min edge, sample size, data checks). This line does not{": " + why if why else ""}.">Not rated ⓘ</span>')
+            f'(min edge, sample size, data checks). This line does not{": " + why if why else ""}.">Not rated</span>')
     return (f'<div class="ph"><div class="ph-id"><div class="ph-av">{avatar(getattr(r, "player_id", None), r.player)}</div><div>'
             f'<div class="ph-name">{html.escape(r.player)}</div>'
             f'<div class="ph-team">{logo(r.team_id)}<b>{html.escape(r.team)}</b><span class="vs">vs</span>{logo(r.opp_id)}{html.escape(r.opponent)}</div>'
