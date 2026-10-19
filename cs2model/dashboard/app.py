@@ -29,7 +29,8 @@ from cs2model.tracking import store
 from cs2model.training import bootstrap as BS
 from cs2model.training.train import MODEL_DIR
 
-st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="◎")
+st.set_page_config(page_title="KPR Lab · CS2 Props +EV", layout="wide",
+                   page_icon=str(Path(__file__).parent / "assets" / "kprlab_icon_512.png"))
 st.markdown("""<style>
 @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap');
 :root {--bg:#0a0d12;--panel:#11161d;--panel2:#161c25;--line:#232b36;--line2:#2e3846;--accent:#ff7a1a;--accent-soft:rgba(255,122,26,.12);
@@ -578,8 +579,8 @@ def load_frames():
 
 
 FRAMES = load_frames()
-LOGO_SRC = "data:image/png;base64," + base64.b64encode((Path(__file__).parent / "assets" / "cs2_logo_light.png").read_bytes()).decode()
-BRAND = (f'<div class="brand"><img src="{LOGO_SRC}" alt="Counter-Strike"/></div>'
+LOGO_SRC = "data:image/png;base64," + base64.b64encode((Path(__file__).parent / "assets" / "kprlab_wordmark.png").read_bytes()).decode()
+BRAND = (f'<div class="brand"><img src="{LOGO_SRC}" alt="KPR Lab"/></div>'
          '<div class="brand-sub">Props <b>+EV</b> terminal</div>')
 
 

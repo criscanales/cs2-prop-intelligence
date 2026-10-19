@@ -103,7 +103,7 @@ def main():
             raise SystemExit("dashboard failed to start")
         try:
             import webview
-            webview.create_window("CS2 Props +EV", url, width=1440, height=900, min_size=(1000, 650))
+            webview.create_window("KPR Lab · CS2 Props +EV", url, width=1440, height=900, min_size=(1000, 650))
             webview.start()
         except Exception:  # noqa: BLE001  no native webview available: fall back to the default browser
             webbrowser.open(url)
