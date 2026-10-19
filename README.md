@@ -210,6 +210,7 @@ Rifler, with no role until 5 maps have weapon data.
 - **Hit matrix.** All legs are drawn from the same match simulations. Same-match legs share map picks, pace, overtime and winner; the same player's kills and HS share draws. The draws are then thinned to the calibrated marginal probabilities.
 - **EV.** Power uses P(all hit). Flex uses the exact distribution of hit counts. EV under independence and `corr_ratio` (P(all) ÷ product of leg probabilities) are reported. Heavily correlated slips are penalised and flagged. Max 2 legs per match by default, so slips favour different matches.
 - **6-leg sanity check.** A +EV 6-leg slip must stay +EV when legs are treated as independent and every leg is made 2pp worse.
+- **Example slips (sidebar).** Opens a window with up to 3 hypothetical slips from the optimizer for PrizePicks or Underdog, with a copy button per slip and a link to the platform's own pick'em page. Nothing is placed or prefilled. Legs in the same match share simulations (dependence modeled); different matches are treated as independent. EV is optimistic: it is the best of many combinations and slip results aren't validated on graded slips yet.
 - **Stake.** Full Kelly is solved over the hit distribution, then multiplied by `kelly_fraction` (0.25). Each slip is capped at `max_stake_pct`, and the best slip per play type is scaled to `daily_exposure_pct`.
 
 ## Tracking

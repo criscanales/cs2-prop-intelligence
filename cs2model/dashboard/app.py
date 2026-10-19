@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
@@ -1362,6 +1363,125 @@ with tab_parlay:
                              column_config={k: st.column_config.Column(k, help=v) for k, v in SLIP_HELP.items()})
             elif len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
                 st.info(f"No {len(sel)}-leg play type configured for {plat} (4-leg plays are excluded).")
+
+APP_LINKS = {"prizepicks": ("Open PrizePicks", "https://app.prizepicks.com/"),
+             "underdog": ("Open Underdog", "https://underdogfantasy.com/pick-em")}
+PLATFORM_NAME = {"prizepicks": "PrizePicks", "underdog": "Underdog"}
+XS_CSS = """<style>
+.xs-card {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:4px 0 6px;}
+.xs-top {display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px;}
+.xs-top .t {font-family:var(--fd);font-size:1.3rem;font-weight:700;letter-spacing:.04em;color:var(--tx);margin-right:4px;}
+.xs-chip {font-family:var(--fd);font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;padding:2px 8px;border-radius:4px;
+  border:1px solid var(--line2);color:var(--tx2);background:var(--panel2);}
+.xs-chip.a {color:#ffb37a;border-color:rgba(255,122,26,.35);background:var(--accent-soft);}
+.xs-m {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px;}
+.xs-m > div {background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;}
+.xs-m .k {font-family:var(--fd);font-size:.74rem;letter-spacing:.14em;text-transform:uppercase;color:var(--tx2);}
+.xs-m .v {font-family:var(--fm);font-size:1.25rem;font-weight:700;color:var(--tx);} .xs-m .v.pos {color:#4ade80;}
+.xs-m .s {font-size:.72rem;color:var(--mut);}
+.xs-leg {display:grid;grid-template-columns:minmax(0,1fr) 74px 56px 88px 76px;gap:8px;align-items:center;padding:7px 0;border-top:1px solid var(--line);}
+.xs-leg .p b {color:var(--tx);} .xs-leg .p span {display:block;font-size:.74rem;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.xs-leg .sd {font-family:var(--fd);font-weight:700;font-size:.8rem;letter-spacing:.1em;text-align:center;padding:2px 6px;border-radius:4px;}
+.xs-leg .sd.o {color:#4ade80;background:var(--pos-soft);} .xs-leg .sd.u {color:#f87171;background:var(--neg-soft);}
+.xs-leg .ln {font-family:var(--fm);font-weight:700;color:var(--tx);text-align:right;} .xs-leg .st, .xs-leg .mp {color:var(--tx2);font-size:.85rem;}
+.xs-note {font-size:.76rem;color:var(--mut);margin-top:8px;}
+@media (max-width:640px) {.xs-m {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .xs-leg {grid-template-columns:auto auto 1fr auto;grid-template-areas:"p p p p" "sd ln st mp";row-gap:4px;}
+  .xs-leg .p {grid-area:p;} .xs-leg .sd {grid-area:sd;} .xs-leg .ln {grid-area:ln;text-align:left;} .xs-leg .st {grid-area:st;} .xs-leg .mp {grid-area:mp;}}
+</style>"""
+
+
+def play_label(play):
+    return play.replace("_", " ").title()
+
+
+def payout_text(play):
+    if play["type"] == "power":
+        return f"{play['legs']}/{play['legs']} pays {play['payout']:g}x"
+    return " · ".join(f"{h}/{play['legs']} {m:g}x" for h, m in sorted(play["payouts"].items(), reverse=True))
+
+
+def slip_text(ids, plat, play_name):
+    """Plain-text slip to enter by hand in the app."""
+    legs = [f"{r.player} ({r.team}) {r.side.upper()} {r.line:g} {r.stat.title()} · {r.maps_label}"
+            for r in slate.loc[list(ids)].itertuples()]
+    return f"{PLATFORM_NAME[plat]} {play_label(play_name)} (hypothetical suggestion)\n" + "\n".join(legs)
+
+
+def copy_button(text):
+    components.html(f"""<button id="b" style="width:100%;height:38px;border-radius:6px;border:1px solid #2e3846;background:#161c25;
+color:#eef1f5;font:600 14px Inter,system-ui,sans-serif;cursor:pointer">Copy slip</button><script>
+const t={json.dumps(text)}, b=document.getElementById("b");
+b.onclick=async()=>{{try{{await navigator.clipboard.writeText(t);}}catch(e){{const a=document.createElement("textarea");a.value=t;
+document.body.appendChild(a);a.select();document.execCommand("copy");a.remove();}}b.textContent="Copied";
+setTimeout(()=>b.textContent="Copy slip",1500);}};</script>""", height=44)
+
+
+def slip_card(s_, plat, play, verified):
+    legs = slate.loc[list(s_.leg_ids)]
+    per_match = legs.match.value_counts()
+    stake = f"${s_.stake:,.2f}" if verified else "hidden"
+    rows = "".join(f'<div class="xs-leg"><div class="p"><b>{html.escape(r.player)}</b>'
+                   f'<span>{html.escape(str(r.team))} vs {html.escape(str(r.opponent))}</span></div>'
+                   f'<span class="sd {r.side[0]}">{r.side.upper()}</span><span class="ln">{r.line:g}</span>'
+                   f'<span class="st">{r.stat.title()}</span><span class="mp">{html.escape(r.maps_label)}</span></div>'
+                   for r in legs.itertuples())
+    shared = int((per_match > 1).sum())
+    corr = (f"{shared} match{'es' if shared != 1 else ''} with 2 legs: those legs are simulated together, so their dependence is "
+            f"modeled (all-hit is {s_.corr_ratio - 1:+.0%} vs treating every leg as independent). " if shared else
+            "Every leg is from a different match. ")
+    st.markdown(f"""<div class="xs-card"><div class="xs-top"><span class="t">{play_label(s_.play)}</span>
+<span class="xs-chip a">{PLATFORM_NAME[plat]}</span><span class="xs-chip">{play['type'].title()}</span>
+<span class="xs-chip">{play['legs']} legs</span><span class="xs-chip">{len(per_match)} matches</span><span class="xs-chip">Hypothetical</span></div>
+<div class="xs-m"><div><div class="k">All hit</div><div class="v">{s_.p_all:.1%}</div><div class="s">simulated</div></div>
+<div><div class="k">Est. EV</div><div class="v {'pos' if s_.ev > 0 else ''}">{s_.ev:+.0%}</div><div class="s">{s_.ev_indep:+.0%} if independent</div></div>
+<div><div class="k">Stake</div><div class="v">{stake}</div><div class="s">fractional Kelly, capped</div></div>
+<div><div class="k">Payout</div><div class="v">{E.payout_vector(play).max():g}x</div><div class="s">{html.escape(payout_text(play))}</div></div></div>
+{rows}<div class="xs-note">{corr}Different matches are treated as independent.</div></div>""", unsafe_allow_html=True)
+
+
+@st.dialog("Example slips", width="large")
+def example_slips_dialog():
+    st.markdown(XS_CSS, unsafe_allow_html=True)
+    ex_plat = st.radio("Platform", ["prizepicks", "underdog"], horizontal=True, key="ex_plat", format_func=PLATFORM_NAME.get)
+    key = (str(res["ts"]), ex_plat, json.dumps([settings, payouts], sort_keys=True, default=str))
+    cache = st.session_state.setdefault("ex_slip_cache", {})
+    if key not in cache:
+        cache.clear()
+        with st.spinner("Simulating slips..."):
+            cache[key] = build_slips(slate, details, ex_plat, settings, payouts)
+    ex = cache[key]
+    avail = E.plays(ex_plat, payouts)
+    verified = bool(payouts.get(ex_plat, {}).get("verified"))
+    st.caption("Hypothetical suggestions from the optimizer, not bets and not placed anywhere. Built from live +EV legs: one leg per "
+               f"player, at most {settings['max_legs_per_match']} legs per match. Best slip of each play type by EV, repeats of "
+               "the same legs skipped.")
+    if not ex.empty:
+        ex = ex.groupby("play").head(1)
+        ex = ex[~ex.leg_ids.map(lambda x: tuple(sorted(x))).duplicated()].head(3)
+    if ex.empty:
+        st.info(f"No +EV slips on {PLATFORM_NAME[ex_plat]} right now.")
+    for s_ in ex.itertuples():
+        slip_card(s_, ex_plat, avail[s_.play], verified)
+        copy_button(slip_text(s_.leg_ids, ex_plat, s_.play))
+    label, url = APP_LINKS[ex_plat]
+    st.link_button(label, url, width="stretch")
+    st.caption(f"Opens {PLATFORM_NAME[ex_plat]}'s own pick'em page. Slips are not filled in for you: enter the legs by hand.")
+    st.markdown(f"""<div class="xs-note"><b>How these numbers are estimated</b><br>
+Payouts come from config/payouts.yaml ({PLATFORM_NAME[ex_plat]} {'marked verified' if verified else 'not verified'}). Your app's
+multipliers can differ by state, promo or line, and lines with their own price are still paid at the table here.<br>
+All-hit and EV come from the model's leg probabilities and simulated games. Legs in the same match share simulations, so their
+dependence is modeled; legs in different matches are assumed independent. EV picks the best of many combinations and leg
+errors compound across legs, so treat it as optimistic: slip results haven't been validated on graded slips yet.</div>""",
+                unsafe_allow_html=True)
+
+
+with st.sidebar:
+    st.markdown('<div class="sb-h">Example slips</div>', unsafe_allow_html=True)
+    if pricing:
+        st.caption("Available when pricing finishes.")
+    elif st.button("Example slips", width="stretch", help="Up to 3 hypothetical slips from the current +EV legs"):
+        example_slips_dialog()
 
 # ---------------- tracking
 with tab_track:
