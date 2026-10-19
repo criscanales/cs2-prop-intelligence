@@ -12,7 +12,8 @@ the model, flags +EV picks and evaluates correlated slips. Ships as a Streamlit 
   multipliers), pick / result / CLV tracking, CSV / JSON export
 - Player Panel: profile header that separates model edge from qualified picks, Recent Series stacked M1+M2 chart vs the line,
   L5 / L10 / L15 / H2H / All historical hit rates, Map Predictions (model vs history), per-map comparison, match history
-  grouped by series, opponent breakdown
+  grouped by series, opponent breakdown, a line stepper that re-prices the chart, hit rates and model edge at a hypothetical
+  (e.g. bumped) line, high-round / blowout map markers, and a match card with event, tier, LAN/online and the moneyline
 - Broadcast-style player portraits: per-photo face framing (OpenCV) on a charcoal backdrop, default crop as fallback
 - Auto-updates while open: lines and odds every 2 minutes, newly finished bo3.gg results every hour
 - Windows and macOS desktop app (download from GitHub Releases)

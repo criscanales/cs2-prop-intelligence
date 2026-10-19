@@ -309,7 +309,7 @@ div[role="dialog"] {overflow-x:hidden;}
 .pc .av.ini {font-size:1.45rem;}
 .pc .top {gap:14px;} .pc .top > div, .pc .who > div {min-width:0;}
 .pc .bet {margin:10px 0 10px;}
-@media (max-width:640px) {.pc .av {width:50px;height:50px;}}
+@media (max-width:640px) {.pc .av {width:50px;height:50px;} .ssr {grid-template-columns:1fr;} .ss {min-width:0;}}
 .pp-df {color:var(--tx2);}
 .pp-mcs {display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center;margin:4px 0 10px;font-family:var(--fm);font-size:.85rem;color:var(--tx);}
 .pp-mcs > div {display:flex;align-items:center;gap:10px;} .pp-mcs .k {font-family:var(--fd);font-size:.68rem;letter-spacing:.12em;
