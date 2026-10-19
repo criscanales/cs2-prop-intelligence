@@ -10,7 +10,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ..types import MatchOdds
-from .http import fetch_json
+from .http import (ROOT, AccessDenied, CircuitBreaker, CircuitOpen, UpstreamUnavailable, _cache_key, cache_get, cached_at,
+                   fetch_json)
 from ..odds import american_to_decimal, devig, map_prob_from_series
 
 PINNACLE_BASE = "https://guest.api.arcadia.pinnacle.com/0.1"
@@ -30,10 +31,48 @@ def _t(s):
     return datetime.fromisoformat(s)
 
 
+PINNACLE_CIRCUIT = CircuitBreaker(threshold=2, cooldown=300.0, max_cooldown=1800.0)
+PINNACLE_LAST_GOOD = ROOT / "data" / "pinnacle_last_good.json"
+
+
+def _save_last_good(matchups, markets, fetched_at: datetime):
+    """Keep the last successful Pinnacle response with its original timestamp (display only, never priced)."""
+    PINNACLE_LAST_GOOD.parent.mkdir(parents=True, exist_ok=True)
+    tmp = PINNACLE_LAST_GOOD.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"fetched_at": fetched_at.isoformat(), "matchups": matchups, "markets": markets}))
+    tmp.replace(PINNACLE_LAST_GOOD)
+
+
+def pinnacle_last_good() -> dict | None:
+    """{'fetched_at': datetime, 'n_matches': CS2 matches} for the last successful Pinnacle pull, or None."""
+    try:
+        if PINNACLE_LAST_GOOD.exists():
+            d = json.loads(PINNACLE_LAST_GOOD.read_text())
+            at, mu, mk = datetime.fromisoformat(d["fetched_at"]), d["matchups"], d["markets"]
+        else:  # installs from before the snapshot file existed: fall back to the expired HTTP cache entries
+            urls = [f"{PINNACLE_BASE}/sports/{PINNACLE_ESPORTS}/matchups", f"{PINNACLE_BASE}/sports/{PINNACLE_ESPORTS}/markets/straight"]
+            ts = [cached_at(u) for u in urls]
+            if not all(ts):
+                return None
+            mu, mk = (cache_get(_cache_key("GET", u, None, None), None) for u in urls)
+            at = datetime.fromtimestamp(min(ts), timezone.utc)
+        return {"fetched_at": at, "n_matches": len(parse_pinnacle(mu, mk))}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def fetch_pinnacle(ttl=300) -> list[MatchOdds]:
     h = {"X-API-Key": PINNACLE_KEY, "Referer": "https://www.pinnacle.com/"}
-    matchups = fetch_json(f"{PINNACLE_BASE}/sports/{PINNACLE_ESPORTS}/matchups", headers=h, ttl=ttl)
-    markets = fetch_json(f"{PINNACLE_BASE}/sports/{PINNACLE_ESPORTS}/markets/straight", headers=h, ttl=ttl)
+    kw = {"headers": h, "ttl": ttl, "retries": 2, "max_backoff": 4.0, "circuit": PINNACLE_CIRCUIT}
+    urls = [f"{PINNACLE_BASE}/sports/{PINNACLE_ESPORTS}/matchups", f"{PINNACLE_BASE}/sports/{PINNACLE_ESPORTS}/markets/straight"]
+    matchups, markets = (fetch_json(u, **kw) for u in urls)
+    ts = [t for t in (cached_at(u) for u in urls) if t]
+    fetched = datetime.fromtimestamp(min(ts), timezone.utc) if ts else datetime.now(timezone.utc)
+    _save_last_good(matchups, markets, fetched)
+    return parse_pinnacle(matchups, markets)
+
+
+def parse_pinnacle(matchups, markets) -> list[MatchOdds]:
     mk_by = {}
     for q in markets:
         mk_by.setdefault(q["matchupId"], []).append(q)
@@ -193,8 +232,20 @@ def fetch_all_books(sources=("pinnacle", "polymarket", "thunderpick")) -> tuple[
     for s in sources:
         try:
             res.extend(fns[s]())
+            continue
+        except AccessDenied as e:
+            msg = f"{s}: access denied ({e}). Not retried; this is an access/region restriction, not an outage"
+        except CircuitOpen as e:
+            msg = f"{s}: temporarily unavailable, paused to avoid repeat requests ({e})"
+        except UpstreamUnavailable as e:
+            msg = f"{s}: temporarily unavailable ({e}), retrying with backoff"
         except Exception as e:  # noqa: BLE001
-            errors.append(f"{s}: {e}")
+            msg = f"{s}: {e}"
+        lg = pinnacle_last_good() if s == "pinnacle" else None
+        if lg:
+            msg += (f". Last good odds {lg['fetched_at']:%Y-%m-%d %H:%M} UTC ({lg['n_matches']} matches) are stale "
+                    "and not used for pricing")
+        errors.append(msg)
     return res, errors
 
 

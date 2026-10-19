@@ -134,6 +134,11 @@ source is skipped and reported in the CLI and dashboard instead of being worked 
 | **Polymarket** public API | series/map moneylines, map-3 yes/no, map round totals (mid price; skipped when the spread is wide) | `gamma-api.polymarket.com/events?tag_slug=counter-strike-2`, no key; backtested in `docs/validation.md` |
 | **Thunderpick** (via bo3.gg) | match moneylines | Pre-match Thunderpick odds that bo3.gg publishes in its upcoming-matches feed (`bet_updates`) |
 
+If a source fails, 429/5xx/timeouts get a few jittered, capped retries, and Retry-After is honored. After two failed pulls
+in a row Pinnacle is paused for 5 minutes, doubling up to 30. A 401/403 is reported as access denied and not retried.
+The last good Pinnacle pull is kept in `data/pinnacle_last_good.json` and shown as stale with its original time.
+It is never used for pricing: matches fall back to the next live source, or to the labeled model Elo.
+
 **Not used:**
 - **HLTV.** Plain HTTP gets a Cloudflare 403 challenge. Getting past it would mean bypassing access controls, so HLTV is skipped.
 - **thunderpick.io directly.** It also answers 403 to non-browser clients. Its odds come through bo3.gg instead.
