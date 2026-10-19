@@ -926,7 +926,7 @@ def map_compare(r, mp, allm, h, scope):
                     f'<td>{pp_num(b, "{:.0%}")}</td><td class="g-m">{nop}</td></tr>')
     head = pp_head([("Metric", "l"), (pp_tip("If played", TIPS["pk"]), "g-m"), (f"On {nm}", "g-h"), ("All maps", ""),
                     (pp_tip("Model − map avg", f"Model projection minus his historical {nm} average"), "g-m")],
-                   [("", 1, ""), ("Model projection", 1, "g-m"), ("Historical · last 3 months", 2, "g-h"), ("Difference", 1, "g-m")])
+                   [("", 1, ""), ("Model projection", 1, "g-m"), ("Historical · last 6 months", 2, "g-h"), ("Difference", 1, "g-m")])
     small = ' <span class="pp-lk">small sample</span>' if 0 < n < 3 else ""
     wins = int(hm.won.sum())
     strip = (f'<div class="pp-mcs"><div><span class="k">P(played)</span>{pp_pbar(x.p_played, False)}</div>'
@@ -1069,7 +1069,7 @@ def opponent_table(h):
                    f'<td>{pp_num(x.kpr, "{:.2f}")}</td><td>{pp_num(x.hs_pct, "{:.0%}")}</td></tr>' for o, x in zip(t.index, t.itertuples()))
     head = pp_head([("Opponent", "l"), ("Maps", ""), ("Avg kills", ""), ("Avg HS", ""), (pp_tip("KPR", TIPS["kpr"]), ""), (pp_tip("HS %", TIPS["hs"]), "")])
     st.markdown('<div class="sect">Opponent breakdown</div>'
-                f'<details class="pp-mh"><summary class="one"><span class="so">By opponent · last 3 months</span>'
+                f'<details class="pp-mh"><summary class="one"><span class="so">By opponent · last 6 months</span>'
                 f'<span class="r">{len(t)} opponents · most maps first</span></summary>'
                 f'<div class="pp-tw"><table class="pp-tbl sm">{head}<tbody>{rows}</tbody></table></div></details>', unsafe_allow_html=True)
 
