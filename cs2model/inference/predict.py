@@ -52,6 +52,29 @@ class Models:
         return float(c.predict([p])[0]) if c is not None else p
 
 
+def series_win(p_map, best_of):
+    """P(team a wins the series) from its per-map win chances (BO1/BO3; longer series use map 1's price)."""
+    p = [p_map.get(j, p_map.get(1, 0.5)) for j in (1, 2, 3)]
+    if best_of == 1:
+        return float(p[0])
+    if best_of == 3:
+        return float(p[0] * p[1] + (p[0] * (1 - p[1]) + (1 - p[0]) * p[1]) * p[2])
+    q, n, w = p[0], best_of, best_of // 2 + 1
+    from math import comb
+    return float(sum(comb(n, k) * q ** k * (1 - q) ** (n - k) for k in range(w, n + 1)))
+
+
+def line_probs(pmf, line, calibrate=lambda p: p, be_over=0.5, be_under=0.5):
+    """Calibrated over/under probabilities and per-side edge for any line, priced like the slate (push voids the leg)."""
+    k = np.arange(len(pmf))
+    p_push = float(pmf[k == line].sum())
+    p_over = calibrate(float(pmf[k > line].sum()))
+    p_under = max(0.0, 1 - p_over - p_push)
+    live = max(1e-9, 1 - p_push)
+    c_over, c_under = min(1.0, p_over / live), min(1.0, p_under / live)
+    return {"p_over": p_over, "p_under": p_under, "p_push": p_push, "edge_over": c_over - be_over, "edge_under": c_under - be_under}
+
+
 class Predictor:
     def __init__(self, hist: pd.DataFrame | None = None, models: Models | None = None, settings=None, payouts=None):
         self.hist = hist if hist is not None else pd.read_csv(HIST_PATH)
@@ -380,6 +403,7 @@ class Predictor:
             Fi = c["F"].set_index("player_id")
             p_ot = float(np.mean([(rounds[j][0] > D.OT_ROUNDS) @ rounds[j][1] for j in rounds]))
             p_m3 = A.p_map3(spec)
+            p_series = series_win(p_map, c["best_of"])
             for ln, pid, tid in c["lns"]:
                 pmf = out["pmfs"][(str(pid), ln.stat, tuple(ln.maps))]
                 k = np.arange(len(pmf))
@@ -406,11 +430,13 @@ class Predictor:
                     "q10": float(np.searchsorted(cdf, 0.1)), "q90": float(np.searchsorted(cdf, 0.9)),
                     "p_over": p_over, "p_under": p_under, "p_over_raw": p_over_raw, "side": side,
                     "p_push": p_push, "p_side": c_over if side == "over" else c_under, "breakeven": be_over if side == "over" else be_under,
+                    "be_over": be_over, "be_under": np.nan if ln.over_only else be_under,
                     "n_maps": int(f.n_maps), "tenure": int(f.tenure), "role_shift": float(f.role_shift) if f.role_shift == f.role_shift else 0.0,
                     "kpr_10": float(f.kpr_10) if f.kpr_10 == f.kpr_10 else np.nan, "hs_pct_10": float(f.hs_pct_10) if f.hs_pct_10 == f.hs_pct_10 else np.nan,
                     "opp_dpr": float(f.opp_dpr) if f.opp_dpr == f.opp_dpr else np.nan,
                     "p_map_win": float(np.mean([p_map[j] if tid == a else 1 - p_map[j] for j in p_map])),
                     "p_ot": p_ot, "p_map3": p_m3, "odds_source": odds.source if odds else "elo",
+                    "best_of": int(c["best_of"]), "p_series_win": p_series if tid == a else 1 - p_series,
                 }
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1

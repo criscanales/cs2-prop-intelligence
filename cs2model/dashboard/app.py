@@ -17,7 +17,7 @@ import streamlit as st
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
-from cs2model.inference.predict import Predictor
+from cs2model.inference.predict import Predictor, line_probs
 from cs2model.scraper.bo3_history import DATA as HDATA
 from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
 from cs2model.scraper.portraits import DEFAULT as PIC_DEFAULT
@@ -242,6 +242,17 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:2px 0 -20px;position:relative;z-index:1;}
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
+.ml {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-top:22px;}
+.ml-h {display:flex;justify-content:space-between;align-items:flex-start;gap:8px;} .ml-h b {font-size:.95rem;} .ml-h .mut {color:var(--mut);font-size:.75rem;}
+.ml-bo {font-size:.7rem;color:var(--tx2);border:1px solid var(--line2);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+.ml-t {display:grid;grid-template-columns:1fr auto 1fr;align-items:center;text-align:center;margin:14px 0 10px;}
+.ml-t .logo {width:44px;height:44px;margin:0 auto 6px;display:block;} .ml-t b {display:block;font-size:.85rem;} .ml-t .vs {color:var(--mut);font-weight:700;}
+.ml-o {border:1px solid var(--line2);border-radius:8px;padding:10px 12px;} .ml-o.blow {border-color:rgba(239,68,68,.55);}
+.ml-k {display:flex;justify-content:space-between;align-items:center;font-size:.7rem;letter-spacing:.06em;color:var(--tx2);text-transform:uppercase;}
+.ml-tag {color:#f87171;border:1px solid rgba(239,68,68,.45);border-radius:999px;padding:1px 8px;text-transform:none;letter-spacing:0;}
+.ml-p {display:flex;justify-content:space-between;margin-top:8px;font-family:'JetBrains Mono',monospace;}
+.ml-p div:last-child {text-align:right;} .ml-p b {font-size:1.15rem;} .ml-p span {display:block;color:var(--tx2);font-size:.8rem;}
+.ml-bar {display:flex;height:7px;border-radius:999px;overflow:hidden;margin:8px 0 4px;gap:2px;} .ml-f {font-size:.7rem;color:var(--mut);text-align:center;}
 @media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
 .ph-q {margin-top:10px;font-size:.75rem;color:var(--tx2);border-left:2px solid var(--line2);padding-left:8px;max-width:520px;}
 .ph-q.ok {color:#86efac;border-left-color:rgba(34,197,94,.6);}
@@ -718,17 +729,45 @@ OVERC = ("#22c55e", "#15803d", "#14532d")
 UNDERC = ("#ef4444", "#b91c1c", "#7f1d1d")
 
 
+def american(p):
+    p = min(max(float(p), 0.01), 0.99)
+    return f"{-round(100 * p / (1 - p))}" if p >= 0.5 else f"+{round(100 * (1 - p) / p)}"
+
+
+ODDS_SRC = {"pinnacle": "Pinnacle", "polymarket": "Polymarket", "thunderpick": "Thunderpick", "elo": "model Elo (no odds listed)"}
+
+
+def match_card(r):
+    p = r.get("p_series_win", np.nan)
+    if p != p:
+        return ""
+    day, clock, _ = start_info(getattr(r, "start_time", None))
+    blow = max(p, 1 - p) >= 0.65
+    ca, cb = ("#22c55e", "#f5a524") if p >= 0.5 else ("#f5a524", "#22c55e")
+    src = ODDS_SRC.get(r.odds_source, str(r.odds_source))
+    return (f'<div class="ml"><div class="ml-h"><div><b>Match</b><br><span class="mut">{html.escape(f"{day} {clock}".strip()) or "Upcoming"}</span></div>'
+            f'<span class="ml-bo">BO{int(r.get("best_of", 3))}</span></div>'
+            f'<div class="ml-t"><div>{logo(r.team_id)}<b>{html.escape(r.team)}</b></div><span class="vs">VS</span>'
+            f'<div>{logo(r.opp_id)}<b>{html.escape(r.opponent)}</b></div></div>'
+            f'<div class="ml-o {"blow" if blow else ""}"><div class="ml-k">Moneyline{"<span class=ml-tag>⚠ Potential blowout</span>" if blow else ""}</div>'
+            f'<div class="ml-p"><div><b style="color:{ca}">{p:.0%}</b><span>{american(p)}</span></div>'
+            f'<div><b style="color:{cb}">{1 - p:.0%}</b><span>{american(1 - p)}</span></div></div>'
+            f'<div class="ml-bar"><i style="width:{p:.1%};background:{ca}"></i><i style="flex:1;background:{cb}"></i></div>'
+            f'<div class="ml-f">Implied win % · fair odds from {html.escape(src)} · avg map win {r.p_map_win:.0%}</div></div></div>')
+
+
 def series_chart(r, h, scope):
     maps = [m for m in r.maps if m <= 3] or list(r.maps)
     over_side = r.side == "over"
     g = h[h.map_number.isin(maps)]
+    g = g.assign(_ot=g.rounds > 24, _bl=(g.team_rounds - g.opp_rounds).abs() >= 8)
     piv = g.pivot_table(index="match_id", columns="map_number", values=r.stat, aggfunc="sum")
     piv = piv.dropna(subset=maps) if all(m in piv.columns for m in maps) else piv.iloc[0:0]
     if len(piv):
-        piv = piv.join(g.groupby("match_id").agg(date=("date", "max"), opp=("opponent", "first"))).sort_values("date")
+        piv = piv.join(g.groupby("match_id").agg(date=("date", "max"), opp=("opponent", "first"), ot=("_ot", "max"), bl=("_bl", "max"))).sort_values("date")
         piv["total"] = piv[maps].sum(1)
 
-    def cell(lbl, d, empty="No series in the last 3 months"):
+    def cell(lbl, d, empty="No series in the last 6 months"):
         n = len(d)
         if n == 0:
             return f'<div class="ss"><div class="ss-h"><b>{lbl}</b><span>n=0</span></div><div class="ss-na">{empty}</div></div>'
@@ -750,24 +789,30 @@ def series_chart(r, h, scope):
                 f'<div class="ss-top"><b>Historical series vs the line:</b> hit rates and averages come from past series only and are not a prediction (the Model card is the forecast for this match). Side: <span class="ph-side {"over" if over_side else "under"}">'
                 f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}</span> · counted on series where all of {r.maps_label} was played</div>'
                 f'<div class="ssr">{cell("L5", piv.tail(5))}{cell("L10", piv.tail(10))}{cell("L15", piv.tail(15))}'
-                f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 3 months")}{model_cell}</div>', unsafe_allow_html=True)
+                f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 6 months")}{model_cell}</div>', unsafe_allow_html=True)
     if piv.empty:
         st.info(f"No recent series with {r.maps_label} played; nothing to chart.")
         return
     win = st.segmented_control("Window", ["L5", "L10", "L15", "H2H", "All"], default="L10", key=f"win_{scope}_{r.name}",
                                label_visibility="collapsed") or "L10"
     if win == "H2H" and h2h.empty:
-        st.info(f"No series vs {r.opponent} with {r.maps_label} played in the last 3 months.")
+        st.info(f"No series vs {r.opponent} with {r.maps_label} played in the last 6 months.")
         return
     v = h2h if win == "H2H" else piv.tail({"L5": 5, "L10": 10, "L15": 15}.get(win, len(piv)))
+    t = st.columns([1, 1, 3])
+    show_ot = t[0].toggle("High round maps", True, key=f"ot_{scope}_{r.name}", help="Mark series where a map went to overtime (25+ rounds).")
+    show_bl = t[1].toggle("Blowout maps", True, key=f"bl_{scope}_{r.name}", help="Mark series where a map was won by 8+ rounds (e.g. 13-5).")
+    ot_f = v.ot.astype(bool).values & show_ot
+    bl_f = v.bl.astype(bool).values & show_bl
+    tags = [", ".join([x for x, f in (("high-round map (OT)", o), ("blowout map", b_)) if f]) or "–" for o, b_ in zip(v.ot.astype(bool), v.bl.astype(bool))]
     hit = (v.total >= r.line).values
     x = list(range(len(v)))
     labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}" for d, o in zip(v.date, v.opp)]
     res = np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH (= line)"))
     cd = np.column_stack([[f"{pd.Timestamp(d):%b %d}" for d in v.date], v.opp.astype(str)] + [v[m].astype(int) for m in maps]
-                         + [v.total.astype(int), res])
+                         + [v.total.astype(int), res, tags])
     ht = ("<b>%{customdata[0]} · vs %{customdata[1]}</b><br>" + "".join(f"Map {m}: %{{customdata[{2 + k}]}}<br>" for k, m in enumerate(maps))
-          + f"Combined total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line: {r.line:g}<br>Result: <b>%{{customdata[{3 + len(maps)}]}}</b><extra></extra>")
+          + f"Combined total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line: {r.line:g}<br>Result: <b>%{{customdata[{3 + len(maps)}]}}</b><br>Maps: %{{customdata[{4 + len(maps)}]}}<extra></extra>")
     fig = go.Figure()
     for k, m in enumerate(maps):
         fig.add_bar(x=x, y=v[m], name=f"Map {m}", customdata=cd, hovertemplate=ht,
@@ -775,7 +820,8 @@ def series_chart(r, h, scope):
                     text=[f"<b>{int(val)}</b><br><span style='font-size:9px'>M{m}</span>" for val in v[m]], textposition="inside",
                     insidetextanchor="middle", textangle=0, constraintext="inside",
                     textfont=dict(color="#ffffff", size=13, family="JetBrains Mono"))
-    fig.add_scatter(x=x, y=v.total, mode="text", text=[f"<b>{int(t)}</b>" for t in v.total], textposition="top center",
+    fig.add_scatter(x=x, y=v.total, mode="text", text=[f"<b>{int(t_)}</b>" + (" <span style='color:#fbbf24'>⚠</span>" if o else "") + (" <span style='color:#93c5fd'>✓</span>" if b_ else "")
+                                              for t_, o, b_ in zip(v.total, ot_f, bl_f)], textposition="top center",
                     textfont=dict(color=["#4ade80" if h_ else "#f87171" for h_ in hit], size=17, family="JetBrains Mono"),
                     hoverinfo="skip", showlegend=False, cliponaxis=False)
     fig.add_hline(y=r.line, line_dash="dash", line_color="rgba(229,231,235,.8)", line_width=2, layer="above")
@@ -793,15 +839,43 @@ def series_chart(r, h, scope):
         fig.update_layout(barcornerradius=6)
     except ValueError:
         pass
+    cl, cr = st.columns([3, 1.15])
+    cr.markdown(match_card(r), unsafe_allow_html=True)
     seg = " · ".join(f"M{m} {'bottom' if k == 0 else 'top' if k == len(maps) - 1 else 'middle'}" for k, m in enumerate(maps))
-    st.markdown(f'<div class="lg"><span><i style="background:{OVERC[0]}"></i><i style="background:{OVERC[1]}"></i>Total ≥ line</span>'
+    cl.markdown(f'<div class="lg"><span><i style="background:{OVERC[0]}"></i><i style="background:{OVERC[1]}"></i>Total ≥ line</span>'
                 f'<span><i style="background:{UNDERC[0]}"></i><i style="background:{UNDERC[1]}"></i>Total below line</span>'
                 f'<span>{seg}</span><span><i class="dash"></i>Line {r.line:g}</span>'
+                + ('<span><b style="color:#fbbf24">⚠</b> high-round map</span>' if show_ot else "")
+                + ('<span><b style="color:#93c5fd">✓</b> blowout map</span>' if show_bl else "") +
                 f'<span class="mut">{len(v)} series shown · hover a bar for details</span></div>', unsafe_allow_html=True)
-    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
+    cl.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
+
+
+def line_stepper(r, i, scope):
+    """- / + line adjuster (e.g. a bumped line): the Recent Series chart, hit rates and Model card re-price at it."""
+    c1, c2 = st.columns([1, 5], vertical_alignment="bottom")
+    ln = c1.number_input("Line", min_value=0.5, max_value=200.0, value=float(r.line), step=1.0, format="%.1f",
+                         key=f"line_{scope}_{r.name}", help="Try another line, e.g. a bumped one. Same model, calibration and payout as the slate.")
+    pmf = details.get(i, {}).get("pmf")
+    if ln == r.line or pmf is None:
+        c2.caption(f"Posted line {r.line:g} ({r.source}). Use − / + to see the chart, hit rates and model edge at another line.")
+        return r
+    be_o = r.get("be_over", r.breakeven)
+    be_u = r.get("be_under", r.breakeven)
+    over_only = be_u != be_u
+    a = line_probs(pmf, ln, lambda p: pred.m.calibrate(r.stat, len(r.maps), p), be_o, 0.5 if over_only else be_u)
+    side = "over" if over_only or a["edge_over"] >= a["edge_under"] else "under"
+    live = max(1e-9, 1 - a["p_push"])
+    r2 = r.copy()
+    r2["line"], r2["side"], r2["edge"] = ln, side, a[f"edge_{side}"]
+    r2["p_side"] = min(1.0, a[f"p_{side}"] / live)
+    c2.caption(f"What-if line {ln:g} (posted {r.line:g}): P(over) {a['p_over']:.1%} · P(under) {a['p_under']:.1%} · "
+               f"best side {side} {r2.edge:+.1%} edge vs {r.edge:+.1%} at the posted line.")
+    return r2
 
 
 def player_detail(r, i, scope):
+    r = line_stepper(r, i, scope)
     h = pred.hist[pred.hist.player_id == r.player_id].sort_values(["date", "map_number"], ascending=False)
     h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
     series_chart(r, h, scope)
@@ -834,7 +908,7 @@ def map_compare(r, mp, allm, h, scope):
     sel = st.segmented_control("Map", opts, default=opts[0], format_func=nice_map, key=f"mc_{scope}_{r.name}") or opts[0]
     x, hm = mp[mp["map"] == sel].iloc[0], h[h.map_name == sel]
     n, nm = len(hm), nice_map(sel)
-    miss = f"No {nm} maps for this player in the last 3 months"
+    miss = f"No {nm} maps for this player in the last 6 months"
 
     def diff(m, v, f):
         if pd.isna(m) or pd.isna(v):
@@ -918,7 +992,7 @@ TIPS = {"pp": "Chance this map is played in the series: map-pick model plus P(ma
         "pk": "Model expected kills on this map if it is played, given the match odds.",
         "ph": "Model expected headshots on this map if it is played.",
         "mk": "Model kills per round on this map.",
-        "n": "Player maps on this map in the last 3 months (tier 1-2).",
+        "n": "Player maps on this map in the last 6 months (tier 1-2).",
         "kpr": "Kills per round: kills / rounds played, averaged over his maps here.",
         "hs": "Headshot %: headshot kills / kills, averaged over his maps here."}
 
@@ -928,11 +1002,11 @@ def map_table(mp, allm, best_of):
     head = pp_head([("Map", "l"), (pp_tip("P(played)", TIPS["pp"]), "l"), (pp_tip("Kills", TIPS["pk"]), "g-m"), (pp_tip("HS", TIPS["ph"]), ""),
                     (pp_tip("KPR", TIPS["mk"]), ""), (pp_tip("Maps", TIPS["n"]), "g-h"), ("Avg kills", ""), ("Avg HS", ""),
                     (pp_tip("KPR", TIPS["kpr"]), ""), (pp_tip("HS %", TIPS["hs"]), "")],
-                   [("", 2, ""), ("Model projections", 3, "g-m"), ("Historical performance · last 3 months", 5, "g-h")])
+                   [("", 2, ""), ("Model projections", 3, "g-m"), ("Historical performance · last 6 months", 5, "g-h")])
     rows = []
     for x in mp.itertuples():
         n, hl = int(x.maps_n) if pd.notna(x.maps_n) else 0, x.map in top
-        miss = f"No {nice_map(x.map)} maps for this player in the last 3 months"
+        miss = f"No {nice_map(x.map)} maps for this player in the last 6 months"
         tag = '<b class="pp-lk">likely</b>' if hl else ""
         rows.append(f'<tr class="{"hl" if hl else ""}"><td class="l mapc">{nice_map(x.map)}{tag}</td><td class="l">{pp_pbar(x.p_played, hl)}</td>'
                     f'<td class="g-m">{x.kills:.1f}{pp_delta(x.kills, x.avg_k, n, "kills")}</td>'
@@ -953,7 +1027,7 @@ def map_table(mp, allm, best_of):
 def match_history(r, h, scope):
     st.markdown('<div class="sect">Match history</div>', unsafe_allow_html=True)
     if h.empty:
-        st.markdown(pp_empty("No tier 1-2 matches for this player in the last 3 months."), unsafe_allow_html=True)
+        st.markdown(pp_empty("No tier 1-2 matches for this player in the last 6 months."), unsafe_allow_html=True)
         return
     c1, c2 = st.columns([2, 3])
     nsel = c1.segmented_control("Series", ["5", "10", "20", "All"], default="5", key=f"mh_n_{scope}_{r.name}") or "5"

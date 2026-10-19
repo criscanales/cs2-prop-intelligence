@@ -420,3 +420,23 @@ def test_find_odds_book_priority():
     assert _find_odds(bk[:2], "fnatic", "Liquid").source == "polymarket"
     assert _find_odds(bk[:1], "Liquid", "fnatic").source == "thunderpick"
     assert _find_odds(bk, "NAVI", "fnatic") is None
+
+
+def test_line_probs_push_and_edge():
+    import numpy as np
+    from cs2model.inference.predict import line_probs
+    pmf = np.zeros(41)
+    pmf[18:23] = 0.2  # uniform on 18..22
+    a = line_probs(pmf, 20.5, be_over=0.5, be_under=0.5)
+    assert abs(a["p_over"] - 0.4) < 1e-9 and abs(a["p_under"] - 0.6) < 1e-9 and a["p_push"] == 0
+    b = line_probs(pmf, 20, be_over=0.5, be_under=0.5)  # whole-number line: push voids the leg
+    assert abs(b["p_push"] - 0.2) < 1e-9 and abs(b["edge_over"]) < 1e-9 and abs(b["edge_under"]) < 1e-9
+    assert line_probs(pmf, 25.5)["p_over"] == 0
+
+
+def test_series_win():
+    from cs2model.inference.predict import series_win
+    assert abs(series_win({1: 0.5, 2: 0.5, 3: 0.5}, 3) - 0.5) < 1e-12
+    assert abs(series_win({1: 0.6}, 1) - 0.6) < 1e-12
+    assert abs(series_win({1: 0.6, 2: 0.6, 3: 0.6}, 3) - 0.648) < 1e-12
+    assert series_win({1: 0.7, 2: 0.7, 3: 0.7}, 5) > 0.7
