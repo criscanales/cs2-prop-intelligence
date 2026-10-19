@@ -17,7 +17,7 @@ import streamlit as st
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
-from cs2model.features.build import AWP_PATH, attach_awp
+from cs2model.features.build import AWP_MIN_MAPS, AWP_PATH, attach_awp, awp_role
 from cs2model.inference.predict import Predictor, line_probs
 from cs2model.scraper.bo3_history import DATA as HDATA
 from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
@@ -709,7 +709,7 @@ def nice_map(m):
 
 @st.cache_data(ttl=3600)
 def awp_profiles(_v):
-    """AWP share of kills per player over his last 20 maps with bo3.gg weapon data: {player_id: (share, maps)}."""
+    """AWP and total kills over each player's last 20 maps with bo3.gg weapon data: {player_id: (awp, kills, maps)}."""
     h = pd.read_csv(HIST_PATH, usecols=lambda c: c in {"game_id", "player_id", "date", "weapon_kills", "awp_kills"})
     h = attach_awp(h)
     h = h[h.weapon_kills > 0]
@@ -718,7 +718,7 @@ def awp_profiles(_v):
     h["date"] = pd.to_datetime(h.date, utc=True, format="ISO8601")
     g = h.sort_values("date").groupby("player_id").tail(20).groupby("player_id")
     a = g[["awp_kills", "weapon_kills"]].sum().assign(n=g.size())
-    return {int(i): (float(x.awp_kills / x.weapon_kills), int(x.n)) for i, x in a.iterrows()}
+    return {int(i): (int(x.awp_kills), int(x.weapon_kills), int(x.n)) for i, x in a.iterrows()}
 
 
 def awp_meta(r):
@@ -727,10 +727,14 @@ def awp_meta(r):
     a = awp_profiles(tuple(v)).get(int(pid)) if pid == pid and pid is not None else None
     if not a:
         return ""
-    share, n = a
-    role, cls = ("AWPer", "awper") if share >= 0.30 else ("Hybrid", "hyb") if share >= 0.10 else ("Rifler", "")
-    return (f' · <span class="awp {cls}" title="Share of his kills with the AWP over his last {n} maps with '
-            f'bo3.gg weapon data. AWPer = 30%+, Hybrid = 10-30%.">{role} · AWP {share:.0%} of kills</span>')
+    awp, kills, n = a
+    role, share = awp_role(awp, kills, n)
+    tip = (f"Last {n} maps with bo3.gg weapon data: {awp} AWP kills of {kills} kills ({share:.0%}). "
+           f"AWPer = 30%+, Hybrid = 10-30%, Rifler = under 10%. A role needs {AWP_MIN_MAPS}+ maps.")
+    if role is None:
+        return f' · <span class="awp" title="{tip}">AWP {share:.0%} of kills · {n} maps</span>'
+    cls = {"AWPer": "awper", "Hybrid": "hyb"}.get(role, "")
+    return f' · <span class="awp {cls}" title="{tip}">{role} · AWP {share:.0%} of kills</span>'
 
 
 def profile_header(r):

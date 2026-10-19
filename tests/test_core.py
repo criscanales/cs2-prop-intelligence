@@ -477,3 +477,13 @@ def test_game_weapons_parse(monkeypatch):
             {"weapon_slug": "m4a1", "kills_sum": 4, "headshots_sum": 2}]}]
     monkeypatch.setattr(b, "fetch_json", lambda *a, **k: rows)
     assert b.game_weapons(1) == {5: (16, 7, 1), 6: (4, 0, 0)}
+
+
+def test_awp_role_limited_samples():
+    from cs2model.features.build import awp_role
+    assert awp_role(40, 100, 4) == (None, 0.4)
+    assert awp_role(0, 0, 10) == (None, 0.0)
+    assert awp_role(30, 100, 5)[0] == "AWPer"
+    assert awp_role(29, 100, 20)[0] == "Hybrid"
+    assert awp_role(10, 100, 20)[0] == "Hybrid"
+    assert awp_role(9, 100, 20)[0] == "Rifler"

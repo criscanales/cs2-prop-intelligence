@@ -94,6 +94,17 @@ def _player_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+AWP_MIN_MAPS = 5
+
+
+def awp_role(awp_kills: int, kills: int, maps: int) -> tuple[str | None, float]:
+    """Observed role from recent AWP kill share; None when there are too few maps to label."""
+    share = awp_kills / kills if kills > 0 else 0.0
+    if maps < AWP_MIN_MAPS or kills <= 0:
+        return None, share
+    return ("AWPer" if share >= 0.30 else "Hybrid" if share >= 0.10 else "Rifler"), share
+
+
 def load_awp(path=AWP_PATH) -> pd.DataFrame | None:
     """Per player-map AWP kills from bo3.gg weapon stats (game_id, player_id, weapon_kills, awp_kills, awp_hs)."""
     if not Path(path).exists():
