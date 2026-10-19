@@ -147,3 +147,33 @@ HS MAE is lower in all three windows (-0.0028, -0.0031, -0.0050); kills MAE in t
 prior maps differs from the 20 maps before those by 15+ points (prior data only). That slice improves in point
 estimate but is too small to be significant on its own. Adding a separate last-5-maps share gave no further gain.
 `awp_share` is in `PLAYER_FEATURES`. Riflers are unchanged; the gain is on AWPers, hybrids and short histories.
+
+### AWP share: release checks (v0.3.2)
+
+**Probability calibration.** Base and base + `awp_share` were retrained on the same history snapshot and scored on
+the same chronological test split (train 2026-04-20..09-04, val 09-04..09-25, test 09-25..10-19; 9,952 S/A/B
+player-maps from 1,014 maps). Over/under probabilities at the test lines:
+
+| market (single map) | Brier base | Brier +AWP | log loss base | log loss +AWP | ECE base | ECE +AWP | cal. slope base | +AWP |
+|---------------------|------------|------------|---------------|---------------|----------|----------|-----------------|------|
+| kills               | 0.2370     | 0.2369     | 0.6664        | 0.6662        | 0.0200   | 0.0197   | 0.956           | 0.953 |
+| headshots           | 0.2363     | 0.2362     | 0.6650        | 0.6648        | 0.0242   | 0.0244   | 1.074           | 1.077 |
+
+Maps 1+2 Brier: kills 0.2358 -> 0.2355, HS 0.2338 -> 0.2337. Paired map-clustered bootstrap of the Brier difference:
+kills -0.00009 [-0.00033,+0.00015], HS -0.00008 [-0.00040,+0.00026]. Calibration is unchanged within noise. Brier
+and log loss are equal or slightly better on every market. HS ECE moves +0.0002, which is inside the noise.
+
+**Correlated observations.** The ten players on a map share its rounds, and a series shares its teams. The
+intervals above resample whole clusters, not player rows. Re-run with three cluster definitions for the HS MAE
+difference (all 14,012 rows): map (`game_id`) [-0.0061,-0.0013], series (`match_id`) [-0.0061,-0.0012], player
+[-0.0059,-0.0011]. Subgroups by series cluster: AWPer [-0.0273,-0.0074], hybrid [-0.0602,-0.0007], <20 prior maps
+[-0.0352,+0.0005], role change [-0.0398,+0.0111]. The overall and AWPer results are robust to the clustering choice.
+
+**Future-data leakage.** Truncation test on the real history: features were rebuilt after deleting every map on or
+after a cutoff, and every feature (including `awp_share`) for rows before the cutoff was compared with the full-history
+build. Cutoff 2026-09-18: 88,260 rows, 0 mismatches. Cutoff 2026-10-08: 105,325 rows, 0 mismatches. Every rolling
+feature uses `shift(1)`. The backtest trains and calibrates only on maps dated before each test window.
+
+**First-run download.** The setup screen shows a progress bar ("Day d of n · rows"). Every bo3.gg response is cached
+on disk with atomic writes. Re-running a crawl over days already downloaded made 0 network requests, so an
+interrupted first run resumes from the cache. `player_maps.csv` is written only once, atomically, at the end.

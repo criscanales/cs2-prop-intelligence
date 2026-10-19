@@ -96,7 +96,10 @@ python desktop/build.py        # Windows -> dist/CS2 Props/CS2 Props.exe, macOS 
 Or run the `desktop-build` workflow (Actions tab), which also runs on every `v*` tag. It builds both and uploads zips.
 
 The packaged app keeps its data, models and editable config in `~/CS2Props` (Windows: `C:\Users\<you>\CS2Props`).
-On first launch it offers **Download data and train**. Unsigned builds:
+On first launch it offers **Download data and train**. It downloads ~6 months of bo3.gg map stats including per-map
+AWP kills (about 4-5 hours; a progress bar shows the day and row count), then trains. Keep the app open and the computer
+awake. If it is interrupted, open the app and click the button again: every response already downloaded is cached, so it
+resumes quickly. Unsigned builds:
 - **macOS:** open the app once and click Done on the "not opened" warning, then go to System Settings → Privacy & Security
   and click **Open Anyway** next to CS2 Props. Or run `xattr -dr com.apple.quarantine "/path/to/CS2 Props.app"` once.
 - **Windows:** in the SmartScreen prompt, choose More info, then Run anyway.

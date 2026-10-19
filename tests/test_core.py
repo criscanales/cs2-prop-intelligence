@@ -487,3 +487,12 @@ def test_awp_role_limited_samples():
     assert awp_role(29, 100, 20)[0] == "Hybrid"
     assert awp_role(10, 100, 20)[0] == "Hybrid"
     assert awp_role(9, 100, 20)[0] == "Rifler"
+
+
+def test_crawl_reports_progress(monkeypatch):
+    from datetime import date
+    from cs2model.scraper import bo3_history as b
+    monkeypatch.setattr(b, "finished_matches", lambda day: ([], {}))
+    seen = []
+    b.crawl(2, end=date(2026, 1, 3), write=False, progress=lambda d, n, r: seen.append((d, n, r)))
+    assert seen == [(1, 3, 0), (2, 3, 0), (3, 3, 0)]

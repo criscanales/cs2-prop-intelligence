@@ -323,13 +323,16 @@ settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
 if not (MODEL_DIR / "kills_lgbm.txt").exists():
     st.title("CS2 Props +EV: first-time setup")
     st.write(f"No trained model yet. This downloads the last {settings['history_days']} days of tier 1-3 bo3.gg map stats "
-             "(about 4-5 hours the first time, cached afterwards) and trains the models.")
+             "(about 4-5 hours the first time, cached afterwards) and trains the models. If it gets interrupted "
+             "(app closed, computer asleep), click the button again: everything already downloaded is reused.")
     if st.button("Download data and train", type="primary"):
         from cs2model.scraper.bo3_history import crawl
         from cs2model.training.train import train
         with st.status("Setting up...", expanded=True) as stat:
-            st.write("Crawling bo3.gg (progress is logged in the terminal / data folder)...")
-            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])))
+            st.write("Downloading bo3.gg map stats...")
+            bar = st.progress(0.0, text="Starting...")
+            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])),
+                       progress=lambda d, n, r: bar.progress(d / n, text=f"Day {d} of {n} · {r:,} player-map rows"))
             st.write(f"{len(df):,} player-map rows. Training...")
             train(df)
             stat.update(label="Done", state="complete")

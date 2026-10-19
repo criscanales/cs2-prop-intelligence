@@ -131,7 +131,9 @@ def rows_for_match(m, teams_inc, tour):
     return rows
 
 
-def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True):
+def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, progress=None):
+    """progress(done_days, total_days, rows) is called after each day. Responses are cached, so a rerun after an
+    interruption skips everything already downloaded."""
     end = end or datetime.now(timezone.utc).date()
     rows, tours = [], {}
     for i in range(days, -1, -1):
@@ -154,6 +156,8 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True):
             except Exception as e:  # noqa: BLE001
                 log.warning("match %s: %s", m.get("slug"), e)
         log.info("%s: %d matches, +%d rows (total %d)", day, len(matches), len(rows) - n0, len(rows))
+        if progress:
+            progress(days + 1 - i, days + 1, len(rows))
     df = pd.DataFrame(rows)
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601")
