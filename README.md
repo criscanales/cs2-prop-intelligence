@@ -88,7 +88,7 @@ available, it falls back to your browser.
 To get a double-click app, build it on the target OS:
 
 ```bash
-pip install -r requirements.txt pyinstaller==6.11.1 pywebview==5.3.2
+pip install -r requirements.txt pyinstaller==6.22.3 pywebview==5.3.2
 python desktop/build.py        # Windows -> dist/CS2 Props/CS2 Props.exe, macOS -> dist/CS2 Props.app
 ```
 
@@ -96,7 +96,8 @@ Or run the `desktop-build` workflow (Actions tab), which also runs on every `v*`
 
 The packaged app keeps its data, models and editable config in `~/CS2Props` (Windows: `C:\Users\<you>\CS2Props`).
 On first launch it offers **Download data and train**. Unsigned builds:
-- **macOS:** right-click the app, choose Open, then Open again.
+- **macOS:** open the app once and click Done on the "not opened" warning, then go to System Settings → Privacy & Security
+  and click **Open Anyway** next to CS2 Props. Or run `xattr -dr com.apple.quarantine "/path/to/CS2 Props.app"` once.
 - **Windows:** in the SmartScreen prompt, choose More info, then Run anyway.
 
 Other commands:
