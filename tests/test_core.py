@@ -505,3 +505,16 @@ def test_hit_matrix_mixed_sim_counts():
     H = hit_matrix(d, [1, 2, 3])
     assert H.shape == (20, 3)
     assert (H[:, 2] == (np.arange(20) % 2 == 0)).all()
+
+
+def test_pending_picks_status(tmp_path):
+    import pandas as pd
+    from cs2model.tracking import store
+    con = store.connect(tmp_path / "t.db")
+    now = pd.Timestamp.now(tz="UTC")
+    base = dict(source="prizepicks", team="A", opponent="B", stat="kills", maps="1+2", line=30.5, side="over", p_side=0.6,
+                breakeven=0.55, edge=0.05, ev=0.1, tier="B", model_mean=31.0)
+    store.log_picks(pd.DataFrame([dict(base, player="x", start_time=str(now + pd.Timedelta(hours=2))),
+                                  dict(base, player="y", start_time=str(now - pd.Timedelta(hours=5)))]), con=con)
+    p = store.pending(con)
+    assert dict(zip(p.player, p.status)) == {"x": "upcoming", "y": "awaiting results"}

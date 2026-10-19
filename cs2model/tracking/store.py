@@ -196,6 +196,15 @@ def _grade_slips(con, payouts=None):
     con.commit()
 
 
+def pending(con=None):
+    """Logged picks that aren't graded yet, with `status` upcoming / awaiting results."""
+    con = con or connect()
+    p = pd.read_sql("SELECT * FROM picks WHERE outcome IS NULL ORDER BY start_time", con)
+    st = pd.to_datetime(p.start_time, utc=True, format="ISO8601", errors="coerce")
+    p["status"] = (st > pd.Timestamp.now(tz="UTC")).map({True: "upcoming", False: "awaiting results"})
+    return p
+
+
 def performance(con=None):
     """ROI, hit rate, CLV and calibration of graded picks."""
     con = con or connect()

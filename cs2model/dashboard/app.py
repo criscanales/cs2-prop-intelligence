@@ -1485,9 +1485,29 @@ with st.sidebar:
 
 # ---------------- tracking
 with tab_track:
+    g1, g2, _ = st.columns([1, 1, 2])
+    if g1.button("Grade logged picks", type="primary", width="stretch",
+                 help="Grade logged picks whose matches are already in the player history"):
+        with st.spinner("Grading..."):
+            pr_ = shared_predictor(HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0, model_mtime())
+            n_graded = store.grade(pr_.hist, pr_.resolve_player)
+        st.success(f"Graded {n_graded} pick{'s' if n_graded != 1 else ''}." if n_graded else
+                   "Nothing new to grade yet. Picks are graded once their maps are in the results.")
+    ru = results_updater()
+    if g2.button("Pull new results", width="stretch", disabled=ru["running"],
+                 help="Fetch newly finished bo3.gg matches, then grade (also runs automatically with Auto-pull)"):
+        start_results_update(ru)
+        st.toast("Pulling new results from bo3.gg. Picks are graded when it finishes.")
     summ, p, s = store.performance()
+    pend = store.pending()
+    if len(pend):
+        n_up = int((pend.status == "upcoming").sum())
+        st.caption(f"{len(pend)} logged pick{'s' if len(pend) != 1 else ''} not graded yet: {n_up} upcoming, "
+                   f"{len(pend) - n_up} awaiting results.")
+        st.dataframe(pend[["status", "start_time", "player", "team", "opponent", "stat", "maps", "side", "line", "p_model",
+                           "edge", "source"]], hide_index=True, width="stretch")
     if not summ.get("picks"):
-        st.info("No graded picks yet. Log picks, then run `python -m cs2model.cli grade` after matches finish.")
+        st.info("No graded picks yet. Log picks from the Slate or Parlays tab, then grade them here after their matches finish.")
     else:
         c = st.columns(5)
         c[0].metric("Graded picks", summ["picks"])
