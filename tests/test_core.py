@@ -452,3 +452,28 @@ def test_add_match_meta_unknown_and_mapping():
     out = add_match_meta(s, t, meta)
     assert list(out.event) == ["Major", "Major", None] and list(out.event_type) == ["lan", "lan", None]
     assert out.odds_at[0] == t and pd.isna(out.odds_at[2])
+
+
+def test_awp_share_features_leak_free():
+    import numpy as np
+    import pandas as pd
+    from cs2model.features.build import attach_awp, _awp_features
+    h = pd.DataFrame({"game_id": [1, 2, 3, 4], "player_id": [7, 7, 7, 8]})
+    awp = pd.DataFrame({"game_id": [1, 2, 4], "player_id": [7, 7, 8], "weapon_kills": [20, 10, 15],
+                        "awp_kills": [10, 5, 0], "awp_hs": [1, 0, 0]})
+    out = _awp_features(attach_awp(h, awp))
+    assert np.isnan(out.awp_share[0]) and np.isnan(out.awp_share[3])
+    assert abs(out.awp_share[1] - (10 + 30 * 0.12) / (20 + 30)) < 1e-12
+    assert abs(out.awp_share[2] - (15 + 30 * 0.12) / (30 + 30)) < 1e-12
+    assert out.awp_maps[2] == 2 and np.isnan(out.awp_kills[2])
+
+
+def test_game_weapons_parse(monkeypatch):
+    from cs2model.scraper import bo3_history as b
+    rows = [{"steam_profile": {"player": {"id": 5}, "player_weapons_stats": [
+        {"weapon_slug": "awp", "kills_sum": 7, "headshots_sum": 1},
+        {"weapon_slug": "ak-47", "kills_sum": 9, "headshots_sum": 6}]}},
+        {"steam_profile": {"player": {"id": 6}}, "player_weapons_stats": [
+            {"weapon_slug": "m4a1", "kills_sum": 4, "headshots_sum": 2}]}]
+    monkeypatch.setattr(b, "fetch_json", lambda *a, **k: rows)
+    assert b.game_weapons(1) == {5: (16, 7, 1), 6: (4, 0, 0)}

@@ -3,6 +3,8 @@
 Rows to be predicted (future maps) can be appended with NaN outcomes; they sort last and
 only see history.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -23,6 +25,8 @@ TEAM_FEATURES = ["team_elo", "opp_elo", "elo_diff", "p_win_elo", "team_pace", "o
                  "team_map_wr", "opp_map_wr", "team_new_players", "opp_new_players"]
 CONTEXT_FEATURES = ["bo_type", "is_lan", "tier_rank", "map_number", "map_code"]
 FEATURES = PLAYER_FEATURES + TEAM_FEATURES + CONTEXT_FEATURES
+AWP_PATH = Path(__file__).resolve().parents[2] / "data" / "awp_maps.csv"
+AWP_PRIOR, AWP_PRIOR_KILLS = 0.12, 30
 MAPS = ["de_ancient", "de_anubis", "de_dust2", "de_inferno", "de_mirage", "de_nuke", "de_overpass",
         "de_train", "de_vertigo"]
 
@@ -87,6 +91,39 @@ def _player_features(df: pd.DataFrame) -> pd.DataFrame:
     prev = g["date"].shift(1)
     df["days_rest"] = (df["date"] - prev).dt.total_seconds() / 86400
     df["maps_7d"] = _count_recent(df, 7)
+    return df
+
+
+def load_awp(path=AWP_PATH) -> pd.DataFrame | None:
+    """Per player-map AWP kills from bo3.gg weapon stats (game_id, player_id, weapon_kills, awp_kills, awp_hs)."""
+    if not Path(path).exists():
+        return None
+    a = pd.read_csv(path).drop_duplicates(["game_id", "player_id"], keep="last")
+    return a[a.weapon_kills > 0]
+
+
+def attach_awp(h: pd.DataFrame, awp: pd.DataFrame | None = None) -> pd.DataFrame:
+    """AWP columns from the crawl when present, filled from the backfill file for older maps."""
+    for c in ("weapon_kills", "awp_kills"):
+        if c not in h:
+            h[c] = np.nan
+    awp = load_awp() if awp is None else awp
+    if awp is None or awp.empty:
+        return h
+    m = h[["game_id", "player_id"]].merge(awp[["game_id", "player_id", "weapon_kills", "awp_kills"]],
+                                          on=["game_id", "player_id"], how="left")
+    have = (h["weapon_kills"] > 0).values
+    for c in ("weapon_kills", "awp_kills"):
+        h[c] = np.where(have, h[c].values, m[c].values)
+    return h
+
+
+def _awp_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Share of a player's kills with the AWP over his last 20 maps that have weapon data, shrunk to the average."""
+    g = df.groupby("player_id", sort=False)
+    a20, k20 = _roll_sum(g, "awp_kills", 20), _roll_sum(g, "weapon_kills", 20)
+    df["awp_maps"] = _grp_roll(g, "awp_kills", 20, "count")
+    df["awp_share"] = ((a20.fillna(0) + AWP_PRIOR_KILLS * AWP_PRIOR) / (k20.fillna(0) + AWP_PRIOR_KILLS)).where(df["awp_maps"] > 0)
     return df
 
 
@@ -159,7 +196,7 @@ def build_features(hist: pd.DataFrame, future: pd.DataFrame | None = None) -> pd
         h = pd.concat([h, f], ignore_index=True)
     h["date"] = pd.to_datetime(h["date"], utc=True, format="ISO8601")
     h = h.sort_values(["future", "date", "game_id", "player_id"], kind="stable").reset_index(drop=True)
-    h = _player_features(h)
+    h = _awp_features(_player_features(attach_awp(h)))
     t = _team_features(team_table(h))
     tf = t.set_index(["game_id", "team_id"])
     key_team = pd.MultiIndex.from_arrays([h["game_id"], h["team_id"]])

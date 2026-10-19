@@ -56,6 +56,20 @@ def game_players(game_id):
     return fetch_json(f"{API}/v1/games/{game_id}/players_stats", ttl=PAST)
 
 
+def game_weapons(game_id):
+    """AWP kills per bo3.gg player id for one map: {player_id: (weapon_kills, awp_kills, awp_hs)}."""
+    out = {}
+    for p in fetch_json(f"{API}/v1/games/{game_id}/weapons_stats", ttl=PAST) or []:
+        sp = p.get("steam_profile") or {}
+        pid = (sp.get("player") or {}).get("id")
+        ws = p.get("player_weapons_stats") or sp.get("player_weapons_stats") or []
+        if pid and ws:
+            aw = [x for x in ws if x.get("weapon_slug") == "awp"]
+            out[pid] = (sum(x.get("kills_sum") or 0 for x in ws), sum(x.get("kills_sum") or 0 for x in aw),
+                        sum(x.get("headshots_sum") or 0 for x in aw))
+    return out
+
+
 def _nn(x):
     """bo3 uses -1 for 'not parsed'; treat negatives as missing."""
     return None if x is None or x < 0 else x
@@ -83,6 +97,11 @@ def rows_for_match(m, teams_inc, tour):
         except Exception as e:  # noqa: BLE001
             log.warning("game %s: %s", g["id"], e)
             continue
+        try:
+            weapons = game_weapons(g["id"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("game %s weapons: %s", g["id"], e)
+            weapons = {}
         for p in players:
             sp = p.get("steam_profile") or {}
             pl = sp.get("player") or {}
@@ -105,6 +124,9 @@ def rows_for_match(m, teams_inc, tour):
                 "headshots": _nn(p.get("headshots")), "first_kills": _nn(p.get("first_kills")),
                 "first_deaths": _nn(p.get("first_death")), "kast": p.get("kast"), "rating": p.get("player_rating"),
                 "adr": p.get("adr"), "team_odds": _odds(m, tid), "opp_odds": _odds(m, opp),
+                "weapon_kills": (weapons.get(pl["id"]) or (None,) * 3)[0],
+                "awp_kills": (weapons.get(pl["id"]) or (None,) * 3)[1],
+                "awp_hs": (weapons.get(pl["id"]) or (None,) * 3)[2],
             })
     return rows
 

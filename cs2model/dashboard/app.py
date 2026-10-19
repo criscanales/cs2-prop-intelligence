@@ -17,6 +17,7 @@ import streamlit as st
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
+from cs2model.features.build import AWP_PATH, attach_awp
 from cs2model.inference.predict import Predictor, line_probs
 from cs2model.scraper.bo3_history import DATA as HDATA
 from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
@@ -215,6 +216,7 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .ph-team img {width:20px;height:20px;object-fit:contain;} .ph-team b {color:var(--tx);font-weight:600;}
 .ph-team .vs {color:var(--mut);margin:0 6px;font-size:.72rem;text-transform:uppercase;letter-spacing:.12em;}
 .ph-meta {margin-top:8px;font-size:.75rem;color:var(--mut);font-family:var(--fm);}
+.ph-meta .awp {color:var(--tx2);} .ph-meta .awp.awper {color:var(--accent);font-weight:700;} .ph-meta .awp.hyb {color:var(--tx);}
 .ph-bet {border-left:1px solid var(--line);padding-left:24px;min-width:430px;}
 .ph-k {font-family:var(--fd);font-size:.68rem;letter-spacing:.14em;text-transform:uppercase;color:var(--mut);}
 .ph-line {display:flex;align-items:center;gap:10px;margin:6px 0 12px;}
@@ -705,6 +707,32 @@ def nice_map(m):
     return m.replace("de_", "").title() if isinstance(m, str) else m
 
 
+@st.cache_data(ttl=3600)
+def awp_profiles(_v):
+    """AWP share of kills per player over his last 20 maps with bo3.gg weapon data: {player_id: (share, maps)}."""
+    h = pd.read_csv(HIST_PATH, usecols=lambda c: c in {"game_id", "player_id", "date", "weapon_kills", "awp_kills"})
+    h = attach_awp(h)
+    h = h[h.weapon_kills > 0]
+    if h.empty:
+        return {}
+    h["date"] = pd.to_datetime(h.date, utc=True, format="ISO8601")
+    g = h.sort_values("date").groupby("player_id").tail(20).groupby("player_id")
+    a = g[["awp_kills", "weapon_kills"]].sum().assign(n=g.size())
+    return {int(i): (float(x.awp_kills / x.weapon_kills), int(x.n)) for i, x in a.iterrows()}
+
+
+def awp_meta(r):
+    pid = getattr(r, "player_id", None)
+    v = [f.stat().st_mtime if f.exists() else 0 for f in (HIST_PATH, AWP_PATH)]
+    a = awp_profiles(tuple(v)).get(int(pid)) if pid == pid and pid is not None else None
+    if not a:
+        return ""
+    share, n = a
+    role, cls = ("AWPer", "awper") if share >= 0.30 else ("Hybrid", "hyb") if share >= 0.10 else ("Rifler", "")
+    return (f' · <span class="awp {cls}" title="Share of his kills with the AWP over his last {n} maps with '
+            f'bo3.gg weapon data. AWPer = 30%+, Hybrid = 10-30%.">{role} · AWP {share:.0%} of kills</span>')
+
+
 def profile_header(r):
     over = r.side == "over"
     why = html.escape(str(getattr(r, "why", "") or ""), quote=True)
@@ -716,7 +744,7 @@ def profile_header(r):
     return (f'<div class="ph"><div class="ph-id"><div class="ph-av">{avatar(getattr(r, "player_id", None), r.player)}</div><div>'
             f'<div class="ph-name">{html.escape(r.player)}</div>'
             f'<div class="ph-team">{logo(r.team_id)}<b>{html.escape(r.team)}</b><span class="vs">vs</span>{logo(r.opp_id)}{html.escape(r.opponent)}</div>'
-            f'<div class="ph-meta">{html.escape(str(r.source).title())} · {conf} · {int(r.n_maps)} prior maps{start_meta(r)}</div></div></div>'
+            f'<div class="ph-meta">{html.escape(str(r.source).title())} · {conf} · {int(r.n_maps)} prior maps{start_meta(r)}{awp_meta(r)}</div></div></div>'
             f'<div class="ph-bet"><div class="ph-k">Selected prop</div><div class="ph-line">'
             f'<span class="ph-side {"over" if over else "under"}">{"▲ OVER" if over else "▼ UNDER"}</span>'
             f'<span class="ln">{r.line:g}</span><span class="ic">{ICON.get(r.stat, "")}</span><span class="st">{r.stat}</span>'
