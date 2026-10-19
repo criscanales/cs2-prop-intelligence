@@ -86,12 +86,20 @@ def hit_labels(hit_dist):
     return " · ".join(f"{k} hit{'s' if k != 1 else ''}: {p:.1%}" for k, p in enumerate(hit_dist))
 
 
+def hit_matrix(details, ids):
+    """Leg hit draws as columns. Matches are simulated independently and can have different draw counts (top-ups only
+    go to matches that need them), so every column is cut to the shortest; draws within a match stay aligned."""
+    hits = [details[i]["hit"] for i in ids]
+    n = min(len(h) for h in hits)
+    return np.column_stack([h[:n] for h in hits])
+
+
 def build_slips(slate, details, platform, settings, payouts, max_legs_pool=20, plays=None):
     """Best slips per play type from +EV legs on one platform (correlation-aware Monte Carlo)."""
     pool = slate[(slate.source == platform) & slate.plus_ev].sort_values("edge", ascending=False).head(max_legs_pool)
     if pool.empty:
         return pd.DataFrame()
-    H = np.column_stack([details[i]["hit"] for i in pool.id])
+    H = hit_matrix(details, pool.id)
     legs = [{"match": r.match, "player": r.player_id, "stat": r.stat, "id": r.id} for r in pool.itertuples()]
     out = []
     for name, play in (plays or E.plays(platform, payouts)).items():

@@ -496,3 +496,12 @@ def test_crawl_reports_progress(monkeypatch):
     seen = []
     b.crawl(2, end=date(2026, 1, 3), write=False, progress=lambda d, n, r: seen.append((d, n, r)))
     assert seen == [(1, 3, 0), (2, 3, 0), (3, 3, 0)]
+
+
+def test_hit_matrix_mixed_sim_counts():
+    import numpy as np
+    from cs2model.pipeline import hit_matrix
+    d = {1: {"hit": np.ones(50, bool)}, 2: {"hit": np.zeros(20, bool)}, 3: {"hit": np.arange(50) % 2 == 0}}
+    H = hit_matrix(d, [1, 2, 3])
+    assert H.shape == (20, 3)
+    assert (H[:, 2] == (np.arange(20) % 2 == 0)).all()

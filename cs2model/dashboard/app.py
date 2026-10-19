@@ -16,7 +16,7 @@ import streamlit as st
 
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
-from cs2model.pipeline import build_slips, diff_sig, hit_labels, line_sig, run_slate, stake_cap
+from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, line_sig, run_slate, stake_cap
 from cs2model.features.build import AWP_MIN_MAPS, AWP_PATH, attach_awp, awp_role
 from cs2model.inference.predict import Predictor, line_probs
 from cs2model.scraper.bo3_history import DATA as HDATA
@@ -1338,7 +1338,7 @@ with tab_parlay:
                 leg_cards(sel)
             rows = []
             if len(sel) >= 2 and not slate.loc[sel, "player_id"].duplicated().any():
-                H = np.column_stack([details[i]["hit"] for i in sel])
+                H = hit_matrix(details, sel)
                 for name, play in avail.items():
                     if play["legs"] != len(sel):
                         continue
