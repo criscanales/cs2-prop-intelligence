@@ -127,7 +127,9 @@ def series_pairs(df):
     return piv[1].astype(int).values, piv[2].astype(int).values
 
 
-def train(hist=None):
+def train(hist=None, out_dir=None, quick_start=False):
+    """Fit and write the models to out_dir (default models/). quick_start marks a model trained on partial history."""
+    out_dir = MODEL_DIR if out_dir is None else out_dir
     settings = load_yaml("settings.yaml")
     payouts = load_yaml("payouts.yaml")
     be = breakeven_per_leg(payouts["prizepicks"]["plays"]["power_2"])
@@ -146,6 +148,9 @@ def train(hist=None):
 
     art = {"features": FEATURES, "rounds_table": rounds_table(feat[feat.split != "test"]),
            "trained_through": str(feat.date.max()), "n_rows": int(len(feat))}
+    hd = pd.to_datetime(hist["date"], utc=True, format="ISO8601")
+    art["history"] = {"from": str(hd.min()), "to": str(hd.max()), "days": int((hd.max() - hd.min()).days) + 1,
+                      "quick_start": bool(quick_start)}
     art["shrink"] = {"kills": fit_shrink(rate(kill_model, va), va.kpr_shrunk.values, va.kills.values, va.rounds.values),
                      "headshots": fit_shrink(rate(hs_model, vah), vah.hs_pct_shrunk.values, vah.headshots.values, vah.kills.values)}
 
@@ -246,13 +251,13 @@ def train(hist=None):
     art["map_model"], report["map_model"] = map_pool.train(hist)
     log.info("map model: %s", report["map_model"])
 
-    MODEL_DIR.mkdir(exist_ok=True)
-    kill_model.save_model(str(MODEL_DIR / "kills_lgbm.txt"))
-    hs_model.save_model(str(MODEL_DIR / "hs_lgbm.txt"))
-    joblib.dump(calibrators, MODEL_DIR / "calibrators.joblib")
-    (MODEL_DIR / "artifacts.json").write_text(json.dumps(art, indent=1))
-    (MODEL_DIR / "backtest.json").write_text(json.dumps(report, indent=1, default=float))
-    rows.to_csv(MODEL_DIR / "backtest_rows.csv", index=False)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    kill_model.save_model(str(out_dir / "kills_lgbm.txt"))
+    hs_model.save_model(str(out_dir / "hs_lgbm.txt"))
+    joblib.dump(calibrators, out_dir / "calibrators.joblib")
+    (out_dir / "backtest.json").write_text(json.dumps(report, indent=1, default=float))
+    rows.to_csv(out_dir / "backtest_rows.csv", index=False)
+    (out_dir / "artifacts.json").write_text(json.dumps(art, indent=1))  # last: its mtime is the "model changed" signal
     return art, report
 
 

@@ -1,4 +1,5 @@
 history_days: 183         # history window (last ~6 months); players keep maps from earlier teams
+quickstart_days: 45       # first run: download this many recent days first, the rest backfills in the background
 history_tiers: [s, a, b, c]  # bo3.gg tiers crawled as player/team history (tier C only adds history)
 tiers: [s, a, b]          # bo3.gg tiers used for training/pricing (S/A = tier 1, B = tier 2)
 team_maps_days: 92        # window for min_team_maps (tier-1/2 maps per team)

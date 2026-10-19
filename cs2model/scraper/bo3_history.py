@@ -5,12 +5,14 @@ Endpoints (all public, discovered from the bo3.gg web app):
   /api/v1/games?filter[games.match_id][eq]=ID   maps of a match (map name, score, rounds)
   /api/v1/games/{game_id}/players_stats         per-player stats for one map
   /api/v1/tournaments?filter[tournaments.id][eq]=ID  event type (lan/online), tier
+  /api/v1/players/{slug}/general_stats          career totals (all tiers and dates)
 """
 import argparse
 import os
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -131,11 +133,24 @@ def rows_for_match(m, teams_inc, tour):
     return rows
 
 
-def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, progress=None):
+def known_matches(hist: pd.DataFrame | None) -> dict:
+    """{match_id: [row dicts]} for matches already in the history with kills on every map row. The crawler reuses
+    these instead of re-fetching their maps (finished maps never change), so an imported bundle or an existing history
+    only costs one request per day plus the new matches."""
+    if hist is None or hist.empty:
+        return {}
+    h = hist.copy()
+    h["date"] = h["date"].astype(str)
+    ok = h.kills.notna().groupby(h.match_id).transform("all")
+    return {mid: g.to_dict("records") for mid, g in h[ok].groupby("match_id")}
+
+
+def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, progress=None, known=None):
     """progress(done_days, total_days, rows) is called after each day. Responses are cached, so a rerun after an
-    interruption skips everything already downloaded."""
+    interruption skips everything already downloaded. `known` (existing history) skips matches already stored."""
     end = end or datetime.now(timezone.utc).date()
     rows, tours = [], {}
+    known = known_matches(known) if isinstance(known, pd.DataFrame) else (known or {})
     for i in range(days, -1, -1):
         day = end - timedelta(days=i)
         try:
@@ -147,6 +162,9 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, p
         n0 = len(rows)
         for m in matches:
             if m.get("tier") not in tiers:
+                continue
+            if m.get("id") in known:
+                rows.extend(known[m["id"]])
                 continue
             tid = m.get("tournament")
             if tid not in tours:
@@ -165,6 +183,32 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, p
     if write:
         save_history(df)
     return df
+
+
+CAREER_KEYS = ("matches_count", "matches_won_count", "matches_lost_count", "games_count", "games_won_count",
+               "games_lost_count", "events_count", "events_won_count", "kills_sum", "deaths_sum", "assists_sum",
+               "damage_sum", "rounds_count")
+
+
+def career_stats(slug: str) -> dict | None:
+    """bo3.gg career totals for one player (all tiers, all dates; no headshots in the source). None if unavailable."""
+    if not slug or not isinstance(slug, str):
+        return None
+    d = fetch_json(f"{API}/v1/players/{quote(slug, safe='')}/general_stats", ttl=86400)
+    if not isinstance(d, dict) or not d.get("games_count"):
+        return None
+    return {k: d.get(k) for k in CAREER_KEYS}
+
+
+def merge_history(*frames: pd.DataFrame) -> pd.DataFrame:
+    """Union of histories, one row per (game_id, player_id); when both have a row the more complete one wins."""
+    frames = [f for f in frames if f is not None and not f.empty]
+    if not frames:
+        return pd.DataFrame()
+    df = pd.concat([f.assign(date=pd.to_datetime(f["date"], utc=True, format="ISO8601")) for f in frames], ignore_index=True)
+    df = df.assign(_nn=df.notna().sum(1)).sort_values("_nn", kind="stable")
+    df = df.drop_duplicates(["game_id", "player_id"], keep="last").drop(columns="_nn")
+    return df.sort_values(["date", "game_id"]).reset_index(drop=True)
 
 
 def save_history(df):

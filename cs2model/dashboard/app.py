@@ -26,6 +26,7 @@ from cs2model.scraper.portraits import DEFAULT as PIC_DEFAULT
 from cs2model.scraper.portraits import frames as portrait_frames
 from cs2model.scraper.lines import fetch_all_lines
 from cs2model.tracking import store
+from cs2model.training import bootstrap as BS
 from cs2model.training.train import MODEL_DIR
 
 st.set_page_config(page_title="CS2 Props +EV", layout="wide", page_icon="◎")
@@ -321,23 +322,59 @@ div[role="dialog"] {overflow-x:hidden;}
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
 
-if not (MODEL_DIR / "kills_lgbm.txt").exists():
+def bundle_import_ui(key):
+    from cs2model import bundle as BU
+    st.caption("Import a bundle you exported from CS2 Props on another computer (Model tab, Data bundle). Its history is merged "
+               "with yours without duplicates, then only missing or newer matches are fetched from bo3.gg. "
+               "Only import bundles you made yourself.")
+    up = st.file_uploader("Bundle (.zip)", type=["zip"], key=f"bu_up_{key}")
+    have = (MODEL_DIR / "artifacts.json").exists()
+    rep_ = st.checkbox("Replace my models with the bundle's", value=False, key=f"bu_rep_{key}", disabled=not have,
+                       help="Off: your current models are kept and only the history is merged. On: your models are backed up, "
+                            "then replaced. With no local models the bundle's are always installed.")
+    if up is not None and st.button("Import bundle", key=f"bu_go_{key}", type="primary"):
+        try:
+            with st.spinner("Checking and importing..."):
+                r_ = BU.import_bundle(up.getvalue(), replace_models=rep_)
+        except BU.BundleError as e:
+            st.error(f"Import failed, nothing was changed: {e}")
+            return
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Import failed: {e}")
+            return
+        m_ = (r_["bundle"].get("model") or {})
+        st.success(f"Imported {r_['rows_in_bundle']:,} player-map rows: {r_['rows_added']:,} new, "
+                   f"{r_['duplicates_skipped']:,} already here. History now {r_['history_from'][:10]} to {r_['history_to'][:10]}"
+                   f"{'' if r_['history_complete'] else ' (partial: the rest downloads in the background)'}.")
+        if r_["models_installed"]:
+            st.success(f"Models installed (trained through {str(m_.get('trained_through'))[:10]}"
+                       + (f"; your previous models were backed up to {r_['model_backup']}" if r_["model_backup"] else "") + ").")
+        else:
+            st.info(f"Models not installed: {r_['models_skipped_reason']}.")
+        st.session_state.pull_after_import = True
+        if not have and r_["models_installed"]:
+            st.button("Open the dashboard", key=f"bu_open_{key}")
+
+
+if not (MODEL_DIR / "artifacts.json").exists():
     st.title("CS2 Props +EV: first-time setup")
-    st.write(f"No trained model yet. This downloads the last {settings['history_days']} days of tier 1-3 bo3.gg map stats "
-             "(about 4-5 hours the first time, cached afterwards) and trains the models. If it gets interrupted "
-             "(app closed, computer asleep), click the button again: everything already downloaded is reused.")
-    if st.button("Download data and train", type="primary"):
-        from cs2model.scraper.bo3_history import crawl
-        from cs2model.training.train import train
+    qd = int(settings.get("quickstart_days", 45))
+    st.write(f"No trained model yet. **Quick start** downloads the last {qd} days of tier 1-3 bo3.gg map stats (about 1.5-2 hours), "
+             f"trains the models and opens the dashboard. The rest of the {settings['history_days']}-day history then downloads in "
+             "the background (about 4 more hours) at the same request rate while you use the app, and the app says "
+             "\"partial history\" until it finishes. If anything is interrupted (app closed, computer asleep), click the button "
+             "again or reopen the app: everything already downloaded is reused.")
+    if st.button("Quick start: download and train", type="primary"):
         with st.status("Setting up...", expanded=True) as stat:
-            st.write("Downloading bo3.gg map stats...")
+            st.write(f"Downloading the last {qd} days of bo3.gg map stats...")
             bar = st.progress(0.0, text="Starting...")
-            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])),
-                       progress=lambda d, n, r: bar.progress(d / n, text=f"Day {d} of {n} · {r:,} player-map rows"))
-            st.write(f"{len(df):,} player-map rows. Training...")
-            train(df)
+            df = BS.quick_start(settings, progress=lambda d, n, r: bar.progress(
+                d / n, text=(f"Day {d} of {n} · {r:,} player-map rows" if d < n else f"Downloaded {r:,} player-map rows. Training...")))
+            st.write(f"{len(df):,} player-map rows. Models trained.")
             stat.update(label="Done", state="complete")
         st.rerun()
+    with st.expander("Moving from another computer? Import a data bundle instead"):
+        bundle_import_ui("setup")
     st.stop()
 
 # ---------------- background pricing: the page renders immediately, the slate fills in when done
@@ -394,15 +431,22 @@ def start_results_update(u):
     def work():
         try:
             from cs2model.scraper.bo3_history import crawl, save_history
-            old = len(pd.read_csv(HIST_PATH, usecols=["game_id"])) if HIST_PATH.exists() else 0
-            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])), write=False)
+            old_df = pd.read_csv(HIST_PATH) if HIST_PATH.exists() else None
+            old = 0 if old_df is None else len(old_df)
+            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])), write=False,
+                       known=old_df)
             if len(df) < 0.9 * old:
                 raise RuntimeError(f"only {len(df):,} rows pulled vs {old:,} on disk; kept the current history")
             save_history(df)
             u["added"] = len(df) - old
             pr = Predictor()
             store.grade(pr.hist, pr.resolve_player)
-            if time.time() - model_mtime() >= float(settings.get("retrain_days", 7)) * 86400:
+            if BS.model_history().get("quick_start"):
+                last = ((BS.read_coverage() or {}).get("promotion") or {}).get("t") or 0
+                if time.time() - last >= 86400:  # full-history candidate vs quick-start model, at most daily
+                    u["training"] = True
+                    BS.gated_retrain(df, settings)
+            elif time.time() - model_mtime() >= float(settings.get("retrain_days", 7)) * 86400:
                 from cs2model.training.train import train
                 u["training"] = True
                 train()
@@ -413,9 +457,59 @@ def start_results_update(u):
     threading.Thread(target=work, daemon=True).start()
 
 
+@st.cache_resource
+def backfill_job():
+    return {"running": False, "err": None, "t_err": 0.0, "phase": None, "day": 0, "n": 0, "rows": 0, "result": None}
+
+
+def start_backfill(b):
+    b.update(running=True, err=None, phase="downloading", day=0)
+
+    def work():
+        try:
+            b["result"] = BS.backfill(settings, b)
+        except Exception as e:  # noqa: BLE001  surfaced in the sidebar, retried in 10 min
+            b.update(err=str(e), t_err=time.time())
+        finally:
+            b.update(running=False, phase=None)
+    threading.Thread(target=work, daemon=True).start()
+
+
+@st.cache_data(show_spinner=False)
+def hist_span(_mtime):
+    return BS.history_span()
+
+
+def backfill_status(u):
+    """Starts/resumes the background backfill while history is partial; returns True while it is partial."""
+    b = backfill_job()
+    if BS.is_complete():
+        if b["running"]:
+            st.caption("Full history downloaded. Training and checking the full-history model…")
+            return True
+        pr = (BS.read_coverage() or {}).get("promotion") or {}
+        if BS.model_history().get("quick_start") and pr and not pr.get("promote"):
+            st.caption(f"Still using the quick-start model: {pr.get('reason')}. Rechecked daily.")
+        return False
+    if not b["running"] and not u["running"] and time.time() - b["t_err"] >= 600:
+        start_backfill(b)
+    sp = hist_span(HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0)
+    st.caption(f"Partial history: {sp['days']} of {settings['history_days']} days")
+    if b["phase"] == "downloading" and b["n"]:
+        st.progress(b["day"] / b["n"], text=f"Backfill day {b['day']} of {b['n']} · {b['rows']:,} rows")
+    elif b["phase"] == "training":
+        st.caption("Full history downloaded. Training and checking the full-history model…")
+    if b["err"]:
+        st.caption(f"Backfill paused: {b['err']} (retrying in 10 min)")
+    return True
+
+
 @st.fragment(run_every=60)
 def results_watch(on, rmin):
     u = results_updater()
+    partial = backfill_status(u)
+    if st.session_state.pop("pull_after_import", False) and not partial and not u["running"]:
+        start_results_update(u)
     mt = HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0
     mm = model_mtime()
     seen = st.session_state.setdefault("hist_seen", mt)
@@ -425,12 +519,14 @@ def results_watch(on, rmin):
         st.toast("Retrained models loaded. Repricing..." if mm != seen_m else "New match results loaded. Repricing...")
         st.session_state.force_refresh = True
         st.rerun(scope="app")
-    if on and not u["running"] and time.time() - max(mt, u["t"] or 0) >= rmin * 60:
+    if on and not partial and not u["running"] and time.time() - max(mt, u["t"] or 0) >= rmin * 60:
         start_results_update(u)
     if u["training"]:
         st.caption("Weekly retrain running in the background…")
     elif u["running"]:
         st.caption("Pulling new results from bo3.gg…")
+    elif partial:
+        pass
     else:
         nxt = max(0, rmin * 60 - (time.time() - max(mt, u["t"] or 0))) / 60
         st.caption(f"Results updated {pd.Timestamp(mt, unit='s', tz='UTC'):%H:%M} UTC"
@@ -921,6 +1017,51 @@ def line_stepper(r, i, scope):
     return r2
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def career_totals(slug):
+    from cs2model.scraper.bo3_history import career_stats
+    return career_stats(slug)  # failures raise and are not cached
+
+
+def career_panel(r):
+    pid = getattr(r, "player_id", None)
+    pl = shared_predictor(HIST_PATH.stat().st_mtime, model_mtime()).players
+    slug = pl.loc[pl.player_id == pid, "player_slug"]
+    slug = slug.iloc[0] if len(slug) and isinstance(slug.iloc[0], str) else None
+    with st.expander("Career statistics · bo3.gg career totals"):
+        try:
+            c = career_totals(slug) if slug else None
+        except Exception:  # noqa: BLE001
+            c = None
+        if not c:
+            st.caption("bo3.gg career totals aren't available for this player right now.")
+            return
+
+        def n(k):
+            return int(c.get(k) or 0)
+
+        def wr(w, l_):
+            return f"{w / (w + l_):.0%} won" if w + l_ else "–"
+        rnd = n("rounds_count")
+        items = [("Matches", f"{n('matches_count'):,}", f"{n('matches_won_count'):,}–{n('matches_lost_count'):,} · "
+                  f"{wr(n('matches_won_count'), n('matches_lost_count'))}"),
+                 ("Maps", f"{n('games_count'):,}", f"{n('games_won_count'):,}–{n('games_lost_count'):,} · "
+                  f"{wr(n('games_won_count'), n('games_lost_count'))}"),
+                 ("Events", f"{n('events_count'):,}", f"{n('events_won_count'):,} won"),
+                 ("K / D / A", f"{n('kills_sum'):,} / {n('deaths_sum'):,} / {n('assists_sum'):,}", ""),
+                 ("Career KPR", f"{n('kills_sum') / rnd:.2f}" if rnd else "–", f"{n('kills_sum'):,} kills ÷ {rnd:,} rounds"),
+                 ("Career ADR", f"{n('damage_sum') / rnd:.1f}" if rnd and c.get("damage_sum") else "–",
+                  f"{n('damage_sum'):,} damage ÷ {rnd:,} rounds" if c.get("damage_sum") else "")]
+        st.markdown('<div class="kpis">' + "".join(
+            f'<div class="kpi"><div class="k">{k}</div><div class="v" style="font-size:{".95" if len(v) > 12 else "1.15"}rem;'
+            f'white-space:nowrap">{v}</div>'
+            f'<div style="font-size:.72rem;color:var(--tx2)">{html.escape(sub)}</div></div>' for k, v, sub in items) + "</div>",
+            unsafe_allow_html=True)
+        st.caption("Career totals from bo3.gg for every match it has on record: all tiers and all dates, not only tier 1-2 "
+                   "or the last 6 months. Context only; the model doesn't use them. bo3.gg publishes no career headshot "
+                   "totals, so none are shown. Win rate = wins ÷ (wins + losses).")
+
+
 def player_detail(r, i, scope):
     r = line_stepper(r, i, scope)
     h = pred.hist[pred.hist.player_id == r.player_id].sort_values(["date", "map_number"], ascending=False)
@@ -1128,6 +1269,11 @@ def player_dialog(i):
     player_detail(r, i, "dlg")
 
 
+if not BS.is_complete():
+    _sp = hist_span(HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0)
+    st.info(f"Partial history: the models and player stats use {_sp['days']} days of bo3.gg maps while the full "
+            f"{settings['history_days']}-day history downloads in the background (progress in the sidebar). Players need "
+            f"{settings['min_maps']} prior maps to be priced, so fewer lines qualify until it finishes.")
 tab_slate, tab_player, tab_parlay, tab_track, tab_model = st.tabs(["Slate", "Player", "Parlays", "Tracking", "Model"])
 
 # ---------------- slate
@@ -1212,6 +1358,7 @@ with tab_player:
         r = slate.loc[pick]
         pmf = details[pick]["pmf"]
         st.markdown(profile_header(r), unsafe_allow_html=True)
+        career_panel(r)
         a, b = st.columns([3, 2])
         with a:
             vals = np.flatnonzero(pmf > 5e-4)
@@ -1589,3 +1736,32 @@ with tab_model:
         st.caption(f"{mm['n_series']} series, {wn['maps']} maps, {mm['test_period'][0]} to {mm['test_period'][1]}; fit only on earlier series. "
                    "Each part is used in pricing only if it beat the previous approach here. \"Previous\" for map winners is one "
                    "Elo win chance on every map.")
+
+    st.subheader("History and data bundle")
+    _mh, _sp = BS.model_history(), hist_span(HIST_PATH.stat().st_mtime if HIST_PATH.exists() else 0)
+    _pr = (BS.read_coverage() or {}).get("promotion") or {}
+    st.caption(f"Player history: {_sp['rows']:,} player-map rows, {str(_sp['from'])[:10]} to {str(_sp['to'])[:10]} "
+               f"({'full' if BS.is_complete() else 'partial'}, target {settings['history_days']} days). "
+               + (f"Models trained on {str(_mh.get('from'))[:10]} to {str(_mh.get('to'))[:10]} ({_mh.get('days')} days"
+                  f"{', quick start' if _mh.get('quick_start') else ''}). " if _mh else "")
+               + (f"Last full-history check: {_pr.get('reason')} ({_pr.get('held_out_rows', 0):,} held-out player-maps)." if _pr else ""))
+    e1, e2 = st.columns(2)
+    with e1:
+        st.markdown("**Export**")
+        st.caption("Saves your bo3.gg history and trained models to one zip for moving to another computer. Not included: "
+                   "your tracking log, settings, API keys or tokens, and the HTTP cache. For your own use only; don't share "
+                   "it publicly.")
+        if st.button("Create bundle", key="bu_export"):
+            from cs2model import bundle as BU
+            try:
+                with st.spinner("Writing bundle..."):
+                    st.session_state.bundle_path = str(BU.export_bundle())
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Export failed: {e}")
+        bp = st.session_state.get("bundle_path")
+        if bp and Path(bp).exists():
+            st.caption(f"Saved to {bp} ({Path(bp).stat().st_size / 1e6:.1f} MB)")
+            st.download_button("Download bundle", Path(bp).read_bytes(), file_name=Path(bp).name, mime="application/zip")
+    with e2:
+        st.markdown("**Import**")
+        bundle_import_ui("model")

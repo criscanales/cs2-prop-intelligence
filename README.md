@@ -96,10 +96,22 @@ python desktop/build.py        # Windows -> dist/CS2 Props/CS2 Props.exe, macOS 
 Or run the `desktop-build` workflow (Actions tab), which also runs on every `v*` tag. It builds both and uploads zips.
 
 The packaged app keeps its data, models and editable config in `~/CS2Props` (Windows: `C:\Users\<you>\CS2Props`).
-On first launch it offers **Download data and train**. It downloads ~6 months of bo3.gg map stats including per-map
-AWP kills (about 4-5 hours; a progress bar shows the day and row count), then trains. Keep the app open and the computer
-awake. If it is interrupted, open the app and click the button again: every response already downloaded is cached, so it
-resumes quickly. Unsigned builds:
+On first launch it offers **Quick start: download and train**. It downloads the most recent 45 days of bo3.gg map stats
+(`quickstart_days` in `config/settings.yaml`; about 1.5-2 hours, with a progress bar showing the day and row count), trains,
+and opens the dashboard. The app is labeled **Partial history** while the rest of the 6-month window (about 4 more hours)
+downloads in the background at the same request rate; the sidebar shows backfill progress. When it finishes, a full-history
+model is trained and replaces the quick-start model only if it scores at least as well on the same held-out maps.
+Keep the app open and the computer awake. If it is interrupted, open the app and click the button again: every response
+already downloaded is cached, so it resumes quickly.
+
+**Moving to another computer:** Model tab → **History and data bundle** → Export writes a local zip (`exports/`) with your map history,
+AWP data and models, plus a checksummed manifest. It never includes your tracking log, settings, HTTP cache, API keys,
+cookies or tokens. On the other computer, use **Import a data bundle** on the setup screen (or in the Model tab). Records already
+on disk are not duplicated, and your existing models are kept unless you tick "Replace my models". After importing, the app
+only downloads maps that are missing or newer. The bundle is for your own machines; don't share it publicly, since it
+contains bo3.gg data.
+
+Unsigned builds:
 - **macOS:** open the app once and click Done on the "not opened" warning, then go to System Settings → Privacy & Security
   and click **Open Anyway** next to CS2 Props. Or run `xattr -dr com.apple.quarantine "/path/to/CS2 Props.app"` once.
 - **Windows:** in the SmartScreen prompt, choose More info, then Run anyway.

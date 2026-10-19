@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import random
+import threading
 import time
 from pathlib import Path
 
@@ -23,6 +24,7 @@ USER_AGENT = os.environ.get("CS2_USER_AGENT", "cs2-props-model/0.1 (personal res
 _session = requests.Session()
 _session.headers.update({"User-Agent": USER_AGENT, "Accept": "application/json"})
 _last_hit: dict[str, float] = {}
+_host_locks: dict[str, threading.Lock] = {}
 
 
 log = logging.getLogger(__name__)
@@ -132,10 +134,12 @@ def cache_put(key: str, value) -> None:
 
 
 def _throttle(host: str, min_interval: float) -> None:
-    wait = _last_hit.get(host, 0.0) + min_interval - time.time()
-    if wait > 0:
-        time.sleep(wait + random.uniform(0, 0.25 * min_interval))
-    _last_hit[host] = time.time()
+    """Per-host spacing; a lock per host so concurrent jobs (backfill, results pull, career stats) share one rate."""
+    with _host_locks.setdefault(host, threading.Lock()):
+        wait = _last_hit.get(host, 0.0) + min_interval - time.time()
+        if wait > 0:
+            time.sleep(wait + random.uniform(0, 0.25 * min_interval))
+        _last_hit[host] = time.time()
 
 
 def _cache_key(method, url, params, body):
