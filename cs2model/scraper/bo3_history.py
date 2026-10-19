@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 import pandas as pd
 
-from .http import ROOT, fetch_json
+from .http import CACHE_DIR, ROOT, fetch_json
 
 API = "https://api.bo3.gg/api"
 DATA = ROOT / "data"
@@ -244,7 +244,7 @@ def team_logos(write=True):
             for v in o:
                 walk(v)
 
-    for f in glob.glob(str(DATA / "cache" / "*" / "*.json")):
+    for f in glob.glob(str(CACHE_DIR / "*" / "*.json")):
         try:
             txt = open(f, encoding="utf-8").read()
             if "/uploads/team/" in txt:
@@ -272,7 +272,7 @@ def player_photos(write=True):
             for v in o:
                 walk(v)
 
-    for f in glob.glob(str(DATA / "cache" / "*" / "*.json")):
+    for f in glob.glob(str(CACHE_DIR / "*" / "*.json")):
         try:
             txt = open(f, encoding="utf-8").read()
             if "/uploads/player/" in txt:

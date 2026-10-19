@@ -546,7 +546,7 @@ LOGOS = load_logos()
 @st.cache_data(ttl=3600)
 def load_photos():
     f = HDATA / "player_photos.json"
-    if not f.exists():
+    if not f.exists() or f.stat().st_size < 3:
         player_photos()
     return {int(k): v for k, v in json.loads(f.read_text()).items()} if f.exists() else {}
 
