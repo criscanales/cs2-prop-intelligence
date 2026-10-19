@@ -101,3 +101,25 @@ Polymarket beats the Elo fallback in every tier (S 0.648 vs 0.676, A 0.659 vs 0.
 0.647 log loss) and in both volume buckets. Favourites win slightly more often than priced (0.65 -> 0.69,
 0.75 -> 0.80), so stretching the price helps a little on B/C but not on S/A, and blending in Elo adds nothing.
 Polymarket is used as a match-odds source (after Pinnacle, before Thunderpick) with its price as-is.
+
+## 6 months of history and tier C maps as history
+
+History extended from 3 months (18 Jul - 18 Oct) to 6 (17 Apr - 18 Oct), and tier C maps added as player/team
+history only: models still train, calibrate and price on tier S/A/B maps. Each config was retrained before each of
+three 10-day windows and scored on the same 13,490 tier S/A/B player-maps (tier C: same 9,776 player-maps).
+
+| S/A/B test maps | kills MAE | kills Poisson NLL | kills bias | HS MAE | HS bias |
+|-----------------|-----------|-------------------|------------|--------|---------|
+| 3m (previous)   | 3.5077    | -24.2131          | +0.034     | 1.6150 | +0.093  |
+| 3m + tier C     | 3.4986    | -24.2156          | +0.039     | 1.6057 | +0.096  |
+| 6m              | 3.4977    | -24.2166          | -0.002     | 1.6103 | +0.112  |
+| 6m + tier C     | 3.4879    | -24.2196          | -0.015     | 1.6039 | +0.115  |
+
+6m + tier C has the lowest kills MAE and NLL in all three windows and in every player-history bucket except 20-40 maps
+(MAE 3.502 vs 3.498 for 6m, NLL still best); the biggest gain is for players with <20 maps in the last 3 months
+(3.528 -> 3.500), e.g. after a transfer. On tier C maps: kills MAE 3.499 -> 3.478, HS 1.616 -> 1.611.
+
+Map pool model on the same 833 S/A/B series (4 windows): map-pick NLL 3.634 -> 3.593 (better in 3 of 4 windows),
+win log loss 0.684 -> 0.675. Per-map win chances beat one-chance-every-map in 3 of 4 windows with the extra data;
+training keeps choosing automatically from its own backtest. `min_team_maps` still counts only tier-1/2 maps from
+the last 92 days (`team_maps_days`).

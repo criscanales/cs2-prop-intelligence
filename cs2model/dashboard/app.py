@@ -307,14 +307,14 @@ settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
 
 if not (MODEL_DIR / "kills_lgbm.txt").exists():
     st.title("CS2 Props +EV: first-time setup")
-    st.write(f"No trained model yet. This downloads the last {settings['history_days']} days of tier 1-2 bo3.gg map stats "
-             "(about 1-1.5 hours the first time, cached afterwards) and trains the models.")
+    st.write(f"No trained model yet. This downloads the last {settings['history_days']} days of tier 1-3 bo3.gg map stats "
+             "(about 2-3 hours the first time, cached afterwards) and trains the models.")
     if st.button("Download data and train", type="primary"):
         from cs2model.scraper.bo3_history import crawl
         from cs2model.training.train import train
         with st.status("Setting up...", expanded=True) as stat:
             st.write("Crawling bo3.gg (progress is logged in the terminal / data folder)...")
-            df = crawl(settings["history_days"], tiers=tuple(settings["tiers"]))
+            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])))
             st.write(f"{len(df):,} player-map rows. Training...")
             train(df)
             stat.update(label="Done", state="complete")
@@ -376,7 +376,7 @@ def start_results_update(u):
         try:
             from cs2model.scraper.bo3_history import crawl, save_history
             old = len(pd.read_csv(HIST_PATH, usecols=["game_id"])) if HIST_PATH.exists() else 0
-            df = crawl(settings["history_days"], tiers=tuple(settings["tiers"]), write=False)
+            df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])), write=False)
             if len(df) < 0.9 * old:
                 raise RuntimeError(f"only {len(df):,} rows pulled vs {old:,} on disk; kept the current history")
             save_history(df)

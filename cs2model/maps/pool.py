@@ -45,7 +45,7 @@ def games_table(hist):
     """One row per map, oriented so team1 is the lower team id (consistent across a match)."""
     g = hist.drop_duplicates("game_id")[["date", "match_id", "game_id", "map_number", "map_name", "bo_type",
                                          "team_id", "opp_id", "won", "team_odds", "opp_odds"]].copy()
-    g["date"] = pd.to_datetime(g["date"], utc=True)
+    g["date"] = pd.to_datetime(g["date"], utc=True, format="ISO8601")
     flip = g.team_id > g.opp_id
     g["t1"] = np.where(flip, g.opp_id, g.team_id)
     g["t2"] = np.where(flip, g.team_id, g.opp_id)

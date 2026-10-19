@@ -148,7 +148,7 @@ def grade(hist: pd.DataFrame, resolve_player, con=None, payouts=None):
     con = con or connect()
     picks = pd.read_sql("SELECT * FROM picks WHERE outcome IS NULL AND start_time IS NOT NULL", con)
     hist = hist.copy()
-    hist["date"] = pd.to_datetime(hist["date"], utc=True)
+    hist["date"] = pd.to_datetime(hist["date"], utc=True, format="ISO8601")
     grade_preds(hist, resolve_player, con)
     n = 0
     for _, p in picks.iterrows():

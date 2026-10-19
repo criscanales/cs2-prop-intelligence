@@ -1,5 +1,7 @@
-history_days: 92          # training window (last ~3 months)
+history_days: 183         # history window (last ~6 months); players keep maps from earlier teams
+history_tiers: [s, a, b, c]  # bo3.gg tiers crawled as player/team history (tier C only adds history)
 tiers: [s, a, b]          # bo3.gg tiers used for training/pricing (S/A = tier 1, B = tier 2)
+team_maps_days: 92        # window for min_team_maps (tier-1/2 maps per team)
 min_team_maps: 12         # both teams need this many tier-1/2 maps in the window (skips one-off teams)
 min_edge: 0.03            # model P(side) - breakeven
 min_maps: 15              # minimum prior maps for a player

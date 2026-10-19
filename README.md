@@ -4,10 +4,10 @@ Predicts CS2 player **kills** and **headshots** (single maps and Maps 1+2), pric
 the model, flags +EV picks and evaluates correlated slips. Ships as a Streamlit dashboard and an optional desktop window.
 
 ## Features
-- Three months of tier 1-2 (bo3.gg S/A/B) map-level player history, leak-free rolling features
+- Six months of bo3.gg map-level player history (tier S/A/B for training and pricing, tier C as extra player history), leak-free rolling features
 - LightGBM + negative-binomial kill model, conditional beta-binomial headshot model, Platt calibration on a held-out window
 - Exact analytic single-leg P(over/under); seeded, cached Monte Carlo for correlated multi-leg slips
-- Live lines from PrizePicks and Underdog; match / map / rounds / overtime odds from Pinnacle's guest API and Thunderpick (via bo3.gg)
+- Live lines from PrizePicks and Underdog; match / map / rounds / overtime odds from Pinnacle's guest API, Polymarket and Thunderpick (via bo3.gg), used in that order
 - Dashboard: +EV play cards with match start times (US Eastern), sortable full board, manual slip builder (Power / Flex
   multipliers), pick / result / CLV tracking, CSV / JSON export
 - Player Panel: profile header that separates model edge from qualified picks, Recent Series stacked M1+M2 chart vs the line,
@@ -28,7 +28,7 @@ the model, flags +EV picks and evaluates correlated slips. Ships as a Streamlit 
 ## Architecture
 ```
 cs2model/
-  scraper/     bo3.gg history crawler, PrizePicks / Underdog lines, Pinnacle / Thunderpick odds, portrait framing
+  scraper/     bo3.gg history crawler, PrizePicks / Underdog lines, Pinnacle / Polymarket / Thunderpick odds, portrait framing
   features/    rolling player / team / map features (prior maps only)
   training/    model training, calibration, backtest
   inference/   predictor, analytic pricing (analytic.py), match simulation (simulate.py)
@@ -48,7 +48,7 @@ Never commit `.env` files or credentials; `.gitignore` excludes them.
 ## Development
 ```bash
 pip install -r requirements.txt
-python -m cs2model.cli crawl      # pull ~3 months of bo3.gg history into data/
+python -m cs2model.cli crawl      # pull ~6 months of bo3.gg history into data/
 python -m cs2model.cli train      # fit models into models/
 streamlit run cs2model/dashboard/app.py   # dashboard on http://localhost:8501
 python -m cs2model.desktop        # same dashboard in a desktop window
@@ -68,7 +68,7 @@ so you can track ROI, CLV and calibration.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt          # Mac: if LightGBM fails to import, run `brew install libomp`
-python -m cs2model.cli crawl             # ~3 months of bo3.gg map stats -> data/player_maps.csv (first run ~1.5 h, then cached)
+python -m cs2model.cli crawl             # ~6 months of bo3.gg map stats -> data/player_maps.csv (first run ~2-3 h, then cached)
 python -m cs2model.cli train             # trains models, prints the backtest table
 streamlit run cs2model/dashboard/app.py  # dashboard at http://localhost:8501
 ```
@@ -126,15 +126,18 @@ source is skipped and reported in the CLI and dashboard instead of being worked 
 | **PrizePicks** | CS2 kills/HS lines | `partner-api.prizepicks.com/projections?league_id=265` (demon / goblin handling: see +EV rules) |
 | **Underdog** | CS2 kills/HS lines + per-line prices | `api.underdogfantasy.com/v1/over_under_lines` |
 | **Pinnacle** guest API | series/map moneylines, map round-total ladders, map overtime yes/no | `guest.api.arcadia.pinnacle.com/0.1/sports/12/...`, the same public endpoints pinnacle.com calls when logged out |
+| **Polymarket** public API | series/map moneylines, map-3 yes/no, map round totals (mid price; skipped when the spread is wide) | `gamma-api.polymarket.com/events?tag_slug=counter-strike-2`, no key; backtested in `docs/validation.md` |
 | **Thunderpick** (via bo3.gg) | match moneylines | Pre-match Thunderpick odds that bo3.gg publishes in its upcoming-matches feed (`bet_updates`) |
 
 **Not used:**
 - **HLTV.** Plain HTTP gets a Cloudflare 403 challenge. Getting past it would mean bypassing access controls, so HLTV is skipped.
 - **thunderpick.io directly.** It also answers 403 to non-browser clients. Its odds come through bo3.gg instead.
 
-Window: `history_days: 92` in `config/settings.yaml` (last ~3 months). Only tier-1/2 events (bo3.gg tiers S/A/B)
-are crawled and modelled. Lines are priced only when both teams have at least `min_team_maps` tier-1/2 maps in
-the window, which skips one-off and unranked teams.
+Window: `history_days: 183` in `config/settings.yaml` (last ~6 months). Tiers S/A/B/C are crawled
+(`history_tiers`), so a player's maps on earlier or lower-tier teams count toward his form, but only tier-1/2
+events (S/A/B, `tiers`) are trained on and priced. Lines are priced only when both teams have at least
+`min_team_maps` tier-1/2 maps in the last `team_maps_days` (92), which skips one-off and unranked teams.
+See `docs/validation.md` for the 3- vs 6-month backtest.
 
 ## Model
 

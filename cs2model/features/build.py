@@ -157,7 +157,7 @@ def build_features(hist: pd.DataFrame, future: pd.DataFrame | None = None) -> pd
         f["future"] = True
         f["date"] = pd.Timestamp("2100-01-01", tz="UTC")
         h = pd.concat([h, f], ignore_index=True)
-    h["date"] = pd.to_datetime(h["date"], utc=True)
+    h["date"] = pd.to_datetime(h["date"], utc=True, format="ISO8601")
     h = h.sort_values(["future", "date", "game_id", "player_id"], kind="stable").reset_index(drop=True)
     h = _player_features(h)
     t = _team_features(team_table(h))

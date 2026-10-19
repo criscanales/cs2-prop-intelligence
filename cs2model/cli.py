@@ -28,7 +28,7 @@ def main(argv=None):
 
     if a.cmd == "crawl":
         from .scraper.bo3_history import crawl
-        df = crawl(a.days or st["history_days"], tiers=tuple(st["tiers"]))
+        df = crawl(a.days or st["history_days"], tiers=tuple(st.get("history_tiers", st["tiers"])))
         print(f"{len(df)} player-map rows")
     elif a.cmd == "train":
         from .training.train import train
@@ -45,7 +45,7 @@ def main(argv=None):
     elif a.cmd == "refresh":
         while True:
             from .scraper.bo3_history import crawl
-            crawl(st["history_days"], tiers=tuple(st["tiers"]))  # cached days are free; only new ones hit the API
+            crawl(st["history_days"], tiers=tuple(st.get("history_tiers", st["tiers"])))  # cached days are free; only new ones hit the API
             grade_cmd()
             if a.retrain:
                 from .training.train import train

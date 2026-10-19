@@ -55,7 +55,7 @@ class Models:
 class Predictor:
     def __init__(self, hist: pd.DataFrame | None = None, models: Models | None = None, settings=None, payouts=None):
         self.hist = hist if hist is not None else pd.read_csv(HIST_PATH)
-        self.hist["date"] = pd.to_datetime(self.hist["date"], utc=True)
+        self.hist["date"] = pd.to_datetime(self.hist["date"], utc=True, format="ISO8601")
         self.m = models or Models.load()
         self.settings = settings or load_yaml("settings.yaml")
         self._payouts_fixed = payouts is not None
@@ -72,6 +72,7 @@ class Predictor:
         mm = self.m.art.get("map_model")
         self.map_model = MapModel(self.hist, mm) if mm else None
         top = tt[tt.tier.isin(self.settings["tiers"])]
+        top = top[top.date >= top.date.max() - pd.Timedelta(days=float(self.settings.get("team_maps_days", 92)))]
         self.team_counts = top.team_id.value_counts()
         self._feat_hist = None
         self._rcache, self._feat_cache, self._price_cache, self._sim_cache = {}, {}, {}, {}

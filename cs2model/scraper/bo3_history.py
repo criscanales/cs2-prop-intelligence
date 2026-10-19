@@ -134,7 +134,7 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True):
         log.info("%s: %d matches, +%d rows (total %d)", day, len(matches), len(rows) - n0, len(rows))
     df = pd.DataFrame(rows)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], utc=True)
+        df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601")
         df = df.drop_duplicates(["game_id", "player_id"]).sort_values(["date", "game_id"])
     if write:
         save_history(df)
