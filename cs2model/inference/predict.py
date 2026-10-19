@@ -404,6 +404,9 @@ class Predictor:
             p_ot = float(np.mean([(rounds[j][0] > D.OT_ROUNDS) @ rounds[j][1] for j in rounds]))
             p_m3 = A.p_map3(spec)
             p_series = series_win(p_map, c["best_of"])
+            if odds is not None and odds.p_series_team1 is not None:  # the book's own series price, oriented to team a
+                flip = team_similarity(odds.team1, self.tnames[a]) < team_similarity(odds.team2, self.tnames[a])
+                p_series = 1 - odds.p_series_team1 if flip else odds.p_series_team1
             for ln, pid, tid in c["lns"]:
                 pmf = out["pmfs"][(str(pid), ln.stat, tuple(ln.maps))]
                 k = np.arange(len(pmf))

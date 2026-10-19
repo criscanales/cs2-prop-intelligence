@@ -30,7 +30,17 @@ jobs:
         run: cd dist && ditto -c -k --keepParent "CS2 Props.app" CS2Props-mac.zip
       - if: runner.os == 'Windows'
         run: Compress-Archive -Path "dist/CS2 Props" -DestinationPath dist/CS2Props-windows.zip
+      - if: runner.os == 'macOS'
+        run: cd dist && shasum -a 256 CS2Props-mac.zip > CS2Props-mac.zip.sha256 && cat CS2Props-mac.zip.sha256
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $h = (Get-FileHash dist/CS2Props-windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$h  CS2Props-windows.zip" | Out-File -Encoding ascii -NoNewline dist/CS2Props-windows.zip.sha256
+          Get-Content dist/CS2Props-windows.zip.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: CS2Props-${{ runner.os }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.sha256

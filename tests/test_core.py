@@ -440,3 +440,15 @@ def test_series_win():
     assert abs(series_win({1: 0.6}, 1) - 0.6) < 1e-12
     assert abs(series_win({1: 0.6, 2: 0.6, 3: 0.6}, 3) - 0.648) < 1e-12
     assert series_win({1: 0.7, 2: 0.7, 3: 0.7}, 5) > 0.7
+
+
+def test_add_match_meta_unknown_and_mapping():
+    import pandas as pd
+    from datetime import datetime, timezone
+    from cs2model.pipeline import add_match_meta
+    s = pd.DataFrame({"team_id": [1, 2, 5], "opp_id": [2, 1, 6], "odds_source": ["polymarket", "polymarket", "elo"]})
+    meta = {frozenset((1, 2)): {"event": "Major", "match_tier": "s", "event_type": "lan"}}
+    t = datetime(2026, 10, 19, tzinfo=timezone.utc)
+    out = add_match_meta(s, t, meta)
+    assert list(out.event) == ["Major", "Major", None] and list(out.event_type) == ["lan", "lan", None]
+    assert out.odds_at[0] == t and pd.isna(out.odds_at[2])

@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from .parlay import engine as E
-from .scraper.books import fetch_all_books
+from .scraper.books import fetch_all_books, fetch_bo3_match_meta
 from .scraper.http import ROOT
 from .scraper.lines import fetch_all_lines
 from .tracking import store
@@ -47,16 +47,34 @@ def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sour
     if on_lines:
         on_lines(lines)
     books, e2 = fetch_all_books(book_sources)
+    odds_at = datetime.now(timezone.utc)
     con = store.connect()
     if log:
         store.snapshot_lines(lines, con)
     slate, details, unmatched = predictor.build_slate(lines, books, n_sims=n_sims, con=con)
+    slate = add_match_meta(slate, odds_at)
     if log:
         store.log_preds(slate, con)
     return {"slate": slate, "details": details, "unmatched": unmatched, "errors": e1 + e2,
             "recon": reconcile(len(lines), slate, unmatched),
             "n_lines": len(lines), "sig": line_sig(lines), "n_books": len(books), "predictor": predictor,
             "ts": datetime.now(timezone.utc)}
+
+
+def add_match_meta(slate, odds_at, meta=None):
+    """Event / tier / LAN from bo3.gg (None when unknown) and when the match odds were fetched."""
+    if slate.empty:
+        return slate
+    if meta is None:
+        try:
+            meta = fetch_bo3_match_meta()
+        except Exception:  # noqa: BLE001
+            meta = {}
+    keys = [frozenset((int(a), int(b))) if a == a and b == b else None for a, b in zip(slate.team_id, slate.opp_id)]
+    for col in ("event", "match_tier", "event_type"):
+        slate[col] = [(meta.get(k) or {}).get(col) for k in keys]
+    slate["odds_at"] = [odds_at if s != "elo" else None for s in slate.odds_source]
+    return slate
 
 
 def stake_cap(settings, payouts, platform):

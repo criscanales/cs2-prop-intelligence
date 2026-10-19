@@ -196,3 +196,29 @@ def fetch_all_books(sources=("pinnacle", "polymarket", "thunderpick")) -> tuple[
         except Exception as e:  # noqa: BLE001
             errors.append(f"{s}: {e}")
     return res, errors
+
+
+def fetch_bo3_match_meta(ttl=300, days_ahead=2) -> dict:
+    """Event name, tier and LAN/online per upcoming bo3.gg match, keyed by frozenset of bo3.gg team ids.
+    Fields bo3.gg does not provide are left as None (shown as Unknown)."""
+    from .bo3_history import tournament
+    out, tours = {}, {}
+    today = datetime.now(timezone.utc).date()
+    for i in range(days_ahead + 1):
+        d = fetch_json(f"{BO3_API}/v2/matches/upcoming", ttl=ttl,
+                       params={"date": (today + timedelta(days=i)).isoformat(), "utc_offset": 0,
+                               "filter[discipline_id][eq]": 1})
+        inc = (d.get("included") or {}).get("tournaments") or {}
+        for tier in ((d.get("data") or {}).get("tiers") or {}).values():
+            for m in tier.get("matches", []):
+                if not (m.get("team1_id") and m.get("team2_id")):
+                    continue
+                tid = m.get("tournament")
+                t = inc.get(str(tid)) or {}
+                if tid and tid not in tours:
+                    tours[tid] = (tournament(tid) or {}).get("event_type")
+                et = tours.get(tid)
+                out[frozenset((int(m["team1_id"]), int(m["team2_id"])))] = {
+                    "event": t.get("name"), "match_tier": m.get("tier") or t.get("tier"),
+                    "event_type": et if et in ("lan", "online") else None}
+    return out

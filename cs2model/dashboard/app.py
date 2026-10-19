@@ -242,9 +242,11 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:2px 0 -20px;position:relative;z-index:1;}
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
+.wi {font-size:.8rem;color:var(--tx2);border:1px dashed rgba(245,165,36,.6);border-radius:8px;padding:6px 10px;} .wi b {color:#fbbf24;}
 .ml {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-top:22px;}
 .ml-h {display:flex;justify-content:space-between;align-items:flex-start;gap:8px;} .ml-h b {font-size:.95rem;} .ml-h .mut {color:var(--mut);font-size:.75rem;}
 .ml-bo {font-size:.7rem;color:var(--tx2);border:1px solid var(--line2);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+.ml-b {display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
 .ml-t {display:grid;grid-template-columns:1fr auto 1fr;align-items:center;text-align:center;margin:14px 0 10px;}
 .ml-t .logo {width:44px;height:44px;margin:0 auto 6px;display:block;} .ml-t b {display:block;font-size:.85rem;} .ml-t .vs {color:var(--mut);font-weight:700;}
 .ml-o {border:1px solid var(--line2);border-radius:8px;padding:10px 12px;} .ml-o.blow {border-color:rgba(239,68,68,.55);}
@@ -745,15 +747,21 @@ def match_card(r):
     blow = max(p, 1 - p) >= 0.65
     ca, cb = ("#22c55e", "#f5a524") if p >= 0.5 else ("#f5a524", "#22c55e")
     src = ODDS_SRC.get(r.odds_source, str(r.odds_source))
-    return (f'<div class="ml"><div class="ml-h"><div><b>Match</b><br><span class="mut">{html.escape(f"{day} {clock}".strip()) or "Upcoming"}</span></div>'
+    ev, tier, et, at = r.get("event"), r.get("match_tier"), r.get("event_type"), r.get("odds_at")
+    ev = ev if isinstance(ev, str) and ev else "Event unknown"
+    tier = f"Tier {tier.upper()}" if isinstance(tier, str) and tier else "Tier unknown"
+    et = {"lan": "LAN", "online": "Online"}.get(et, "LAN/online unknown")
+    at = f"odds checked {pd.Timestamp(at):%H:%M} UTC" if at is not None and at == at else "no market odds listed"
+    return (f'<div class="ml"><div class="ml-h"><div><b>{html.escape(ev)}</b><br><span class="mut">{html.escape(f"{day} {clock}".strip()) or "Upcoming"}</span></div>'
             f'<span class="ml-bo">BO{int(r.get("best_of", 3))}</span></div>'
+            f'<div class="ml-b"><span class="ml-bo">{tier}</span><span class="ml-bo">{et}</span></div>'
             f'<div class="ml-t"><div>{logo(r.team_id)}<b>{html.escape(r.team)}</b></div><span class="vs">VS</span>'
             f'<div>{logo(r.opp_id)}<b>{html.escape(r.opponent)}</b></div></div>'
             f'<div class="ml-o {"blow" if blow else ""}"><div class="ml-k">Moneyline{"<span class=ml-tag>⚠ Potential blowout</span>" if blow else ""}</div>'
             f'<div class="ml-p"><div><b style="color:{ca}">{p:.0%}</b><span>{american(p)}</span></div>'
             f'<div><b style="color:{cb}">{1 - p:.0%}</b><span>{american(1 - p)}</span></div></div>'
             f'<div class="ml-bar"><i style="width:{p:.1%};background:{ca}"></i><i style="flex:1;background:{cb}"></i></div>'
-            f'<div class="ml-f">Implied win % · fair odds from {html.escape(src)} · avg map win {r.p_map_win:.0%}</div></div></div>')
+            f'<div class="ml-f">Implied win % · fair odds from {html.escape(src)} · {at} · avg map win {r.p_map_win:.0%}</div></div></div>')
 
 
 def series_chart(r, h, scope):
@@ -781,13 +789,13 @@ def series_chart(r, h, scope):
                 f'<div class="ss-r"><span class="k">Avg</span><span class="v">{avg:.1f}</span>'
                 f'<span class="f {"pos" if (diff > 0) == over_side and diff != 0 else "neg"}">{diff:+.1f} vs line</span></div></div>')
     h2h = piv[piv.opp == r.opponent] if len(piv) else piv
-    model_cell = (f'<div class="ss ss-m"><div class="ss-h"><b>MODEL</b><span>forecast · this match</span></div>'
-                  f'<div class="ss-r"><span class="k">P({r.side})</span><span class="v">{r.p_side:.1%}</span><span class="f">edge {r.edge:+.1%}</span></div>'
+    model_cell = (f'<div class="ss ss-m"><div class="ss-h"><b>MODEL</b><span>{"forecast · hypothetical line" if r.get("what_if") else "forecast · this match"}</span></div>'
+                  f'<div class="ss-r"><span class="k">P({r.side})</span><span class="v">{r.p_side:.1%}</span><span class="f">{"hyp. edge" if r.get("what_if") else "edge"} {r.edge:+.1%}</span></div>'
                   f'<div class="ss-r"><span class="k">Mean</span><span class="v">{r.model_mean:.1f}</span>'
                   f'<span class="f">{r.model_mean - r.line:+.1f} vs line</span></div></div>')
     st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
                 f'<div class="ss-top"><b>Historical series vs the line:</b> hit rates and averages come from past series only and are not a prediction (the Model card is the forecast for this match). Side: <span class="ph-side {"over" if over_side else "under"}">'
-                f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}</span> · counted on series where all of {r.maps_label} was played</div>'
+                f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}{" (hypothetical)" if r.get("what_if") else ""}</span> · counted on series where all of {r.maps_label} was played</div>'
                 f'<div class="ssr">{cell("L5", piv.tail(5))}{cell("L10", piv.tail(10))}{cell("L15", piv.tail(15))}'
                 f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 6 months")}{model_cell}</div>', unsafe_allow_html=True)
     if piv.empty:
@@ -855,7 +863,7 @@ def line_stepper(r, i, scope):
     """- / + line adjuster (e.g. a bumped line): the Recent Series chart, hit rates and Model card re-price at it."""
     c1, c2 = st.columns([1, 5], vertical_alignment="bottom")
     ln = c1.number_input("Line", min_value=0.5, max_value=200.0, value=float(r.line), step=1.0, format="%.1f",
-                         key=f"line_{scope}_{r.name}", help="Try another line, e.g. a bumped one. Same model, calibration and payout as the slate.")
+                         key=f"line_{scope}_{r.source}_{r.player_id}_{r.stat}_{r.maps_label}_{r.odds_type}_{r.line:g}", help="Try another line, e.g. a bumped one. Same model, calibration and payout as the slate.")
     pmf = details.get(i, {}).get("pmf")
     if ln == r.line or pmf is None:
         c2.caption(f"Posted line {r.line:g} ({r.source}). Use − / + to see the chart, hit rates and model edge at another line.")
@@ -869,8 +877,11 @@ def line_stepper(r, i, scope):
     r2 = r.copy()
     r2["line"], r2["side"], r2["edge"] = ln, side, a[f"edge_{side}"]
     r2["p_side"] = min(1.0, a[f"p_{side}"] / live)
-    c2.caption(f"What-if line {ln:g} (posted {r.line:g}): P(over) {a['p_over']:.1%} · P(under) {a['p_under']:.1%} · "
-               f"best side {side} {r2.edge:+.1%} edge vs {r.edge:+.1%} at the posted line.")
+    r2["what_if"] = True
+    push = f" · push {a['p_push']:.1%} (voids the leg)" if a["p_push"] > 0 else ""
+    c2.markdown(f'<div class="wi"><b>HYPOTHETICAL LINE {ln:g}</b> · not an offered line (posted: {r.line:g} on {html.escape(str(r.source).title())}) · '
+                f'model P(over) {a["p_over"]:.1%} · P(under) {a["p_under"]:.1%}{push} · '
+                f'hypothetical edge {side} {r2.edge:+.1%} at the current price vs {r.edge:+.1%} at the posted line</div>', unsafe_allow_html=True)
     return r2
 
 
