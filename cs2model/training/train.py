@@ -45,7 +45,7 @@ def _fit_lgb(tr, va, target, offset_col):
 
 
 def rate(model, X):
-    return np.exp(model.predict(X[FEATURES], raw_score=True))
+    return np.exp(model.predict(X[model.feature_name()], raw_score=True))
 
 
 def shrunk_rate(r, ref, lam):

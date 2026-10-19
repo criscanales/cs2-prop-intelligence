@@ -323,7 +323,7 @@ settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
 if not (MODEL_DIR / "kills_lgbm.txt").exists():
     st.title("CS2 Props +EV: first-time setup")
     st.write(f"No trained model yet. This downloads the last {settings['history_days']} days of tier 1-3 bo3.gg map stats "
-             "(about 2-3 hours the first time, cached afterwards) and trains the models.")
+             "(about 4-5 hours the first time, cached afterwards) and trains the models.")
     if st.button("Download data and train", type="primary"):
         from cs2model.scraper.bo3_history import crawl
         from cs2model.training.train import train

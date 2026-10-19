@@ -69,7 +69,7 @@ so you can track ROI, CLV and calibration.
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt          # Mac: if LightGBM fails to import, run `brew install libomp`
-python -m cs2model.cli crawl             # ~6 months of bo3.gg map stats -> data/player_maps.csv (first run ~2-3 h, then cached)
+python -m cs2model.cli crawl             # ~6 months of bo3.gg map stats -> data/player_maps.csv incl. per-map AWP kills (first run ~4-5 h, then cached)
 python -m cs2model.cli train             # trains models, prints the backtest table
 streamlit run cs2model/dashboard/app.py  # dashboard at http://localhost:8501
 ```
@@ -140,6 +140,11 @@ Window: `history_days: 183` in `config/settings.yaml` (last ~6 months). Tiers S/
 events (S/A/B, `tiers`) are trained on and priced. Lines are priced only when both teams have at least
 `min_team_maps` tier-1/2 maps in the last `team_maps_days` (92), which skips one-off and unranked teams.
 See `docs/validation.md` for the 3- vs 6-month backtest.
+
+AWP share: bo3.gg's per-map weapon stats (`/games/{id}/weapons_stats`) give each player's AWP kills. The share of his
+kills with the AWP over his last 20 maps is a model feature (`awp_share`, it lowered headshot error on AWPers,
+hybrids and short histories in the backtest) and shows in the Player Panel as AWPer (30%+) / Hybrid (10-30%) /
+Rifler, with no role until 5 maps have weapon data.
 
 ## Model
 

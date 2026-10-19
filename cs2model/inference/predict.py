@@ -17,7 +17,7 @@ import lightgbm as lgb
 import numpy as np
 import pandas as pd
 
-from ..features.build import FEATURES, build_features
+from ..features.build import build_features
 from ..maps.pool import MapModel, anchored
 from ..names import norm_player, team_similarity
 from ..parlay.engine import load_yaml, single_breakeven
@@ -251,8 +251,8 @@ class Predictor:
         maps = self.active_maps
         w = self.map_weights(a, b)
         X = self._map_overrides(F, maps)
-        X["kpr_hat"] = np.exp(self.m.kills.predict(X[FEATURES], raw_score=True, num_threads=self.lgb_threads))
-        X["hs_hat"] = np.clip(np.exp(self.m.hs.predict(X[FEATURES], raw_score=True, num_threads=self.lgb_threads)), 0.05, 0.95)
+        X["kpr_hat"] = np.exp(self.m.kills.predict(X[self.m.kills.feature_name()], raw_score=True, num_threads=self.lgb_threads))
+        X["hs_hat"] = np.clip(np.exp(self.m.hs.predict(X[self.m.hs.feature_name()], raw_score=True, num_threads=self.lgb_threads)), 0.05, 0.95)
         sh = self.m.art.get("shrink", {})
         X["kpr_hat"] = shrunk_rate(X.kpr_hat.values, X.kpr_shrunk.values, sh.get("kills", 1.0))
         X["hs_hat"] = np.clip(shrunk_rate(X.hs_hat.values, X.hs_pct_shrunk.values, sh.get("headshots", 1.0)), 0.05, 0.95)

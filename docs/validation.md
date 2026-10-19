@@ -123,3 +123,27 @@ Map pool model on the same 833 S/A/B series (4 windows): map-pick NLL 3.634 -> 3
 win log loss 0.684 -> 0.675. Per-map win chances beat one-chance-every-map in 3 of 4 windows with the extra data;
 training keeps choosing automatically from its own backtest. `min_team_maps` still counts only tier-1/2 maps from
 the last 92 days (`team_maps_days`).
+
+## AWP share (bo3.gg weapon stats)
+
+bo3.gg's `/games/{id}/weapons_stats` gives per-player, per-weapon kills for every map. `awp_share` is a player's AWP
+kills / weapon kills over his previous 20 maps with weapon data, shrunk to 12% with 30 pseudo-kills (NaN with no
+prior weapon data). Weapon stats were backfilled for 6,862 of 6,864 S/A/B maps (99.96% of player-maps). Base model vs
+base + `awp_share`, same protocol as above (retrained before each of three 10-day windows, 14,012 S/A/B player-maps).
+95% intervals are a game-level bootstrap of the paired MAE difference.
+
+| S/A/B test maps          | rows   | HS MAE base | HS MAE +AWP | diff (95% CI)            | kills MAE base | +AWP   |
+|--------------------------|--------|-------------|-------------|--------------------------|----------------|--------|
+| all                      | 14,012 | 1.6066      | 1.6030      | -0.0035 [-0.0061,-0.0013] | 3.4873         | 3.4857 |
+| prior AWPer (30%+)       | 2,493  | 1.7662      | 1.7491      | -0.0171 [-0.0263,-0.0070] | 3.5503         | 3.5442 |
+| prior hybrid (10-30%)    | 421    | 1.8270      | 1.7958      | -0.0312 [-0.0627,+0.0006] | 3.4158         | 3.3998 |
+| prior rifler (<10%)      | 10,959 | 1.5605      | 1.5611      | +0.0005 [-0.0011,+0.0024] | 3.4745         | 3.4743 |
+| <20 prior maps           | 1,040  | 1.6397      | 1.6228      | -0.0169 [-0.0337,-0.0004] | 3.4467         | 3.4403 |
+| role change              | 387    | 1.6795      | 1.6652      | -0.0143 [-0.0399,+0.0070] | 3.5772         | 3.5667 |
+| stable role              | 10,897 | 1.6059      | 1.6035      | -0.0024 [-0.0048,-0.0001] | 3.4930         | 3.4923 |
+
+HS MAE is lower in all three windows (-0.0028, -0.0031, -0.0050); kills MAE in two of three (+0.0032, -0.0033,
+-0.0069). HS Poisson NLL -7.8111 -> -7.8124; HS bias +0.113 -> +0.119. "Role change" = AWP share over the last 5
+prior maps differs from the 20 maps before those by 15+ points (prior data only). That slice improves in point
+estimate but is too small to be significant on its own. Adding a separate last-5-maps share gave no further gain.
+`awp_share` is in `PLAYER_FEATURES`. Riflers are unchanged; the gain is on AWPers, hybrids and short histories.

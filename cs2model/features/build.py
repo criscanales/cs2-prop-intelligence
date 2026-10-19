@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ..scraper.http import ROOT
+
 WINDOWS = (5, 10, 20)
 EWM_HALFLIFE = 8
 TIER_RANK = {"s": 0, "a": 1, "b": 2, "c": 3, "d": 4}
@@ -18,14 +20,14 @@ ELO_K = 24.0
 PLAYER_FEATURES = (
     [f"{s}_{w}" for w in WINDOWS for s in ("kpr", "hs_pct", "rating", "adr", "kast", "open_rate", "fk_share")]
     + ["kpr_ewm", "hs_pct_ewm", "rating_ewm", "kpr_shrunk", "hs_pct_shrunk", "n_maps", "kills_sd_20",
-       "map_kpr", "map_n", "tenure", "days_rest", "maps_7d", "role_shift", "rounds_20"]
+       "map_kpr", "map_n", "tenure", "days_rest", "maps_7d", "role_shift", "rounds_20", "awp_share"]
 )
 TEAM_FEATURES = ["team_elo", "opp_elo", "elo_diff", "p_win_elo", "team_pace", "opp_pace", "exp_rounds",
                  "closeness", "team_ot_rate", "opp_ot_rate", "opp_dpr", "opp_map_dpr", "team_kpr",
                  "team_map_wr", "opp_map_wr", "team_new_players", "opp_new_players"]
 CONTEXT_FEATURES = ["bo_type", "is_lan", "tier_rank", "map_number", "map_code"]
 FEATURES = PLAYER_FEATURES + TEAM_FEATURES + CONTEXT_FEATURES
-AWP_PATH = Path(__file__).resolve().parents[2] / "data" / "awp_maps.csv"
+AWP_PATH = ROOT / "data" / "awp_maps.csv"
 AWP_PRIOR, AWP_PRIOR_KILLS = 0.12, 30
 MAPS = ["de_ancient", "de_anubis", "de_dust2", "de_inferno", "de_mirage", "de_nuke", "de_overpass",
         "de_train", "de_vertigo"]
