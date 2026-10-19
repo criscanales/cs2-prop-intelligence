@@ -145,9 +145,12 @@ def known_matches(hist: pd.DataFrame | None) -> dict:
     return {mid: g.to_dict("records") for mid, g in h[ok].groupby("match_id")}
 
 
-def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, progress=None, known=None):
+def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, progress=None, known=None,
+          keep_days=None):
     """progress(done_days, total_days, rows) is called after each day. Responses are cached, so a rerun after an
-    interruption skips everything already downloaded. `known` (existing history) skips matches already stored."""
+    interruption skips everything already downloaded. `known` (existing history) skips matches already stored.
+    write=True merges the crawled days into the history on disk (never shrinks it) and returns the merged history;
+    keep_days drops rows older than that many days before `end`."""
     end = end or datetime.now(timezone.utc).date()
     rows, tours = [], {}
     known = known_matches(known) if isinstance(known, pd.DataFrame) else (known or {})
@@ -181,6 +184,9 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, p
         df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601")
         df = df.drop_duplicates(["game_id", "player_id"]).sort_values(["date", "game_id"])
     if write:
+        df = merge_history(pd.read_csv(HIST_PATH, low_memory=False) if HIST_PATH.exists() else None, df)
+        if keep_days is not None and not df.empty:
+            df = df[df["date"] >= pd.Timestamp(end - timedelta(days=keep_days), tz="UTC")].reset_index(drop=True)
         save_history(df)
     return df
 

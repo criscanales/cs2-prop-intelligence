@@ -11,7 +11,7 @@ from .parlay.engine import load_yaml
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="cs2model")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    c = sub.add_parser("crawl", help="pull last N days of bo3.gg map stats")
+    c = sub.add_parser("crawl", help="pull last N days of bo3.gg map stats and merge them into the history")
     c.add_argument("--days", type=int, default=None)
     sub.add_parser("train", help="train + backtest models")
     s = sub.add_parser("slate", help="price today's lines, print +EV picks and slips, export CSV/JSON")
@@ -28,7 +28,8 @@ def main(argv=None):
 
     if a.cmd == "crawl":
         from .scraper.bo3_history import crawl
-        df = crawl(a.days or st["history_days"], tiers=tuple(st.get("history_tiers", st["tiers"])))
+        df = crawl(a.days or st["history_days"], tiers=tuple(st.get("history_tiers", st["tiers"])),
+                   keep_days=st["history_days"])
         print(f"{len(df)} player-map rows")
     elif a.cmd == "train":
         from .training.train import train
@@ -45,7 +46,7 @@ def main(argv=None):
     elif a.cmd == "refresh":
         while True:
             from .scraper.bo3_history import crawl
-            crawl(st["history_days"], tiers=tuple(st.get("history_tiers", st["tiers"])))  # cached days are free; only new ones hit the API
+            crawl(st["history_days"], tiers=tuple(st.get("history_tiers", st["tiers"])), keep_days=st["history_days"])  # cached days are free; only new ones hit the API
             grade_cmd()
             if a.retrain:
                 from .training.train import train

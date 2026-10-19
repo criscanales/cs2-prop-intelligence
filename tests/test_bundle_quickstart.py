@@ -90,6 +90,24 @@ def test_crawl_reuses_known_matches(monkeypatch):
     assert ("g", 100) in calls
 
 
+def test_crawl_write_merges_into_history_and_never_shrinks_it(tmp_path, monkeypatch):
+    from datetime import date
+    monkeypatch.setattr(b, "DATA", tmp_path)
+    monkeypatch.setattr(b, "HIST_PATH", tmp_path / "player_maps.csv")
+    old, new = _rows(4), _rows(1, start=8)  # games 1000-1003 (Jan-Apr) + game 1008 (Sep 10)
+    old.to_csv(b.HIST_PATH, index=False)
+    monkeypatch.setattr(b, "tournament", lambda tid: {})
+    monkeypatch.setattr(b, "rows_for_match", lambda m, teams, tour: new.to_dict("records"))
+    monkeypatch.setattr(b, "finished_matches", lambda day: ([{"id": 900, "tier": "a", "tournament": 9}], {}))
+    df = b.crawl(1, end=date(2026, 9, 11), tiers=("a",))
+    disk = pd.read_csv(b.HIST_PATH)
+    assert len(df) == len(disk) == len(old) + len(new) and not disk.duplicated(["game_id", "player_id"]).any()
+    monkeypatch.setattr(b, "finished_matches", lambda day: ([], {}))
+    b.crawl(1, end=date(2026, 9, 11), tiers=("a",))
+    assert len(pd.read_csv(b.HIST_PATH)) == len(old) + len(new)
+    b.crawl(1, end=date(2026, 9, 11), tiers=("a",), keep_days=100)
+    assert set(pd.read_csv(b.HIST_PATH).game_id) == {1008}
+
 def test_legacy_install_counts_as_complete(home):
     assert BS.read_coverage() is None and BS.is_complete()
     BS.write_coverage(complete=False)
