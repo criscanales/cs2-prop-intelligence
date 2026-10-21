@@ -80,6 +80,13 @@ def record_gap(gap_start, gap_end, scope, reason, con=None):
     con.commit()
 
 
+def first_observation(con):
+    """Earliest timestamp of any collected record (line snapshot, prediction, map-odds snapshot), or None."""
+    ts = [r[0] for q in ("SELECT min(ts) FROM line_snapshots", "SELECT min(ts) FROM preds", "SELECT min(snapshot_ts) FROM map_odds_log")
+          for r in con.execute(q).fetchall() if r[0]]
+    return min(ts, key=lambda t: pd.to_datetime(t, utc=True)) if ts else None
+
+
 def data_gaps(con=None):
     con = con or connect()
     return pd.read_sql("SELECT * FROM data_gaps ORDER BY gap_start", con)

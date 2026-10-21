@@ -106,16 +106,67 @@ def test_retention_keeps_30_plus_days_and_monthly_older():
     assert BK.to_prune(names[:1], NOW + timedelta(days=400)) == []
 
 
-def test_due_daily_and_after_runs_rate_limited():
+def test_due_daily_and_after_runs_short_configurable_interval():
     c = {"preds": 10, "preds_graded": 2, "picks_graded": 0, "match_results": 1, "map_odds_log": 3, "slips": 0}
     assert BK.due({}, c, NOW, None) == "daily"
     st = {"last_check": NOW.isoformat(), "history_counts": c}
     assert BK.due(st, c, NOW + timedelta(hours=7), NOW.isoformat()) is None
     graded = dict(c, preds_graded=5)
-    assert BK.due(st, graded, NOW + timedelta(hours=2), NOW.isoformat()) is None
-    assert BK.due(st, graded, NOW + timedelta(hours=7), NOW.isoformat()) == "event"
-    assert BK.due(st, dict(c, map_odds_log=4), NOW + timedelta(hours=7), NOW.isoformat()) is None
+    assert BK.due(st, graded, NOW + timedelta(minutes=10), NOW.isoformat()) is None
+    assert BK.due(st, graded, NOW + timedelta(minutes=31), NOW.isoformat()) == "event"
+    assert BK.due(st, graded, NOW + timedelta(minutes=6), NOW.isoformat(), event_min=5) == "event"
+    assert BK.due(st, dict(c, map_odds_log=4), NOW + timedelta(minutes=31), NOW.isoformat()) == "event"
+    assert BK.due(st, dict(c, preds=40), NOW + timedelta(minutes=31), NOW.isoformat()) is None
     assert BK.due(st, c, NOW + timedelta(hours=25), NOW.isoformat()) == "daily"
+
+
+def test_retention_thins_intraday_versions_after_two_days():
+    names = [f"kprlab-tracking-{(NOW - timedelta(minutes=30 * i)):%Y%m%dT%H%M%SZ}-event-{i:012x}.zip" for i in range(48 * 40)]
+    drop = set(BK.to_prune(names, NOW))
+    kept = [BK.parse_name(n) for n in names if n not in drop]
+    assert sum(k["ts"] >= NOW - timedelta(days=2) for k in kept) == 97
+    mid = [k for k in kept if NOW - timedelta(days=35) <= k["ts"] < NOW - timedelta(days=2)]
+    assert len({k["ts"].date() for k in mid}) == len(mid) >= 32
+    assert len(kept) < 200
+
+
+def test_poll_once_publishes_health_and_opens_then_closes_alert(db, tmp_path, monkeypatch):
+    bs = BK.DirStore(tmp_path / "store")
+    assert BK.poll_once(bs, db, NOW) is None
+    h = __import__("json").loads((tmp_path / "store" / BK.HEALTH_NAME).read_text())
+    assert h["last_result"] == "uploaded" and h["db_present"] and h["history_counts"]["preds"] == 2
+    monkeypatch.setattr(BK, "secret_hits", lambda con: ["preds.player"])
+    _add_pred(db, 60)
+    assert BK.poll_once(bs, db, NOW + timedelta(hours=25)) is not None
+    assert (tmp_path / "store" / "ALERT.txt").exists() and BK.status()["alert_open"]
+    monkeypatch.undo()
+    monkeypatch.setattr(BK, "STATUS_PATH", tmp_path / "status.json")
+    assert BK.poll_once(bs, db, NOW + timedelta(hours=50)) is None
+    assert not (tmp_path / "store" / "ALERT.txt").exists() and not BK.status()["alert_open"]
+
+
+def test_poll_once_waits_for_missing_db_but_still_heartbeats(tmp_path, monkeypatch):
+    monkeypatch.setattr(BK, "STATUS_PATH", tmp_path / "status.json")
+    bs = BK.DirStore(tmp_path / "store")
+    assert BK.poll_once(bs, tmp_path / "missing.db", NOW) is None
+    h = __import__("json").loads((tmp_path / "store" / BK.HEALTH_NAME).read_text())
+    assert h["db_present"] is False and [n for n in bs.names() if n.endswith(".zip")] == []
+
+
+def test_supervisor_restarts_crashed_daemon(tmp_path, monkeypatch):
+    import sys
+    monkeypatch.setattr(BK, "STATUS_PATH", tmp_path / "status.json")
+    monkeypatch.setattr(BK, "LOG_PATH", tmp_path / "backup.log")
+    n = BK.supervise([sys.executable, "-c", "raise SystemExit(3)"], max_restarts=2, backoff=(0, 0))
+    assert n == 3 and BK.status()["daemon_restarts"] == 3
+    assert "BACKUP DAEMON EXITED (code 3)" in (tmp_path / "backup.log").read_text()
+
+
+def test_first_observation_is_earliest_collected_record(db):
+    con = store.connect(db)
+    assert store.first_observation(con) == "2026-10-20"
+    empty = store.connect(db.with_name("empty.db"))
+    assert store.first_observation(empty) is None
 
 
 def test_data_gaps_append_only_and_idempotent(db):

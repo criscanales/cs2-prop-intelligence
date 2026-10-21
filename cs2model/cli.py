@@ -3,6 +3,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import time
 
 import pandas as pd
@@ -34,6 +35,9 @@ def main(argv=None):
     bd = sub.add_parser("backup-daemon", help="daily backups + backups after grading/collection runs")
     bd.add_argument("--dest", **dest)
     bd.add_argument("--poll-min", type=int, default=15)
+    bs = sub.add_parser("backup-supervisor", help="run backup-daemon and restart it whenever it exits")
+    bs.add_argument("--dest", **dest)
+    bs.add_argument("--poll-min", type=int, default=15)
     rs = sub.add_parser("restore", help="download, verify and restore tracking.db from a backup")
     rs.add_argument("--dest", **dest)
     rs.add_argument("--name", default=None, help="backup file name (default newest)")
@@ -42,7 +46,7 @@ def main(argv=None):
     sub.add_parser("backup-status", help="last backup attempt / success / error")
     g = sub.add_parser("record-gap", help="permanently record a period with no tracking data")
     g.add_argument("--start", required=True)
-    g.add_argument("--end", required=True)
+    g.add_argument("--end", required=True, help="ISO time, or first-observation = earliest record in tracking.db")
     g.add_argument("--scope", required=True)
     g.add_argument("--reason", required=True)
     a = ap.parse_args(argv)
@@ -72,7 +76,7 @@ def main(argv=None):
         from .tracking import store
         rep = store.map3_report()
         print(rep.to_string(index=False) if len(rep) else "no finished BO3s with logged map odds yet")
-    elif a.cmd in ("backup", "backup-daemon", "restore"):
+    elif a.cmd in ("backup", "backup-daemon", "backup-supervisor", "restore"):
         from .tracking import backup as BK
         if not a.dest:
             raise SystemExit("no backup destination: pass --dest or set KPR_BACKUP_DEST")
@@ -84,6 +88,8 @@ def main(argv=None):
             print(f"uploaded {name}" if name else "unchanged since last backup; nothing uploaded")
         elif a.cmd == "backup-daemon":
             BK.daemon(a.dest, a.poll_min)
+        elif a.cmd == "backup-supervisor":
+            BK.supervise([sys.executable, "-m", "cs2model.cli", "backup-daemon", "--dest", a.dest, "--poll-min", str(a.poll_min)])
         else:
             print(json.dumps(BK.restore_latest(a.dest, a.target, a.force, a.name), indent=2))
     elif a.cmd == "backup-status":
@@ -91,7 +97,11 @@ def main(argv=None):
         print(json.dumps(BK.status(), indent=2) or "no backups yet")
     elif a.cmd == "record-gap":
         from .tracking import store
-        store.record_gap(a.start, a.end, a.scope, a.reason)
+        con = store.connect()
+        end = store.first_observation(con) if a.end == "first-observation" else a.end
+        if end is None:
+            raise SystemExit("no records in tracking.db yet; cannot take the gap end from the first observation")
+        store.record_gap(a.start, end, a.scope, a.reason, con)
         print(store.data_gaps().to_string(index=False))
     elif a.cmd == "refresh":
         while True:

@@ -12,6 +12,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -30,7 +31,9 @@ STATUS_PATH = ROOT / "data" / "backup_status.json"
 LOG_PATH = ROOT / "data" / "backup.log"
 APP_REPO = "criscanales/cs2-prop-intelligence"
 KEEP_DAYS = 35
-EVENT_MIN_HOURS = 6
+KEEP_ALL_DAYS = 2
+EVENT_MIN_MINUTES = int(os.environ.get("KPR_BACKUP_EVENT_MIN", "30"))
+HEALTH_NAME = "kprlab-health.json"
 DAILY_HOURS = 24
 ASSET_WARN = 900  # GitHub allows 1000 assets per release
 SECRET_RE = re.compile(r"(?i)(gh[pousr]_[a-z0-9]{30,}|github_pat_[a-z0-9_]{30,}|AKIA[0-9A-Z]{16}|sk-[a-z0-9]{20,}|"
@@ -224,17 +227,23 @@ def parse_name(name):
             "reason": m[2], "hash12": m[3]}
 
 
-def to_prune(names, now=None, keep_days=KEEP_DAYS):
-    """Keep everything newer than keep_days, the newest backup of each older month, and the newest overall."""
+def to_prune(names, now=None, keep_days=KEEP_DAYS, keep_all_days=KEEP_ALL_DAYS):
+    """Keep every version from the last keep_all_days, the newest per UTC day up to keep_days, the newest of
+    each older month, and the newest overall. Bounds the release to roughly 100 intraday + 35 daily + monthly assets."""
     now = now or datetime.now(timezone.utc)
     items = sorted(filter(None, map(parse_name, names)), key=lambda x: x["ts"], reverse=True)
-    keep, months = set(), set()
+    keep, days, months = set(), set(), set()
     for i, it in enumerate(items):
-        if i == 0 or it["ts"] >= now - timedelta(days=keep_days):
+        t = it["ts"]
+        if i == 0 or t >= now - timedelta(days=keep_all_days):
             keep.add(it["name"])
-        elif (it["ts"].year, it["ts"].month) not in months:
+        elif t >= now - timedelta(days=keep_days):
+            if t.date() not in days:
+                keep.add(it["name"])
+        elif (t.year, t.month) not in months:
             keep.add(it["name"])
-        months.add((it["ts"].year, it["ts"].month))
+        days.add(t.date())
+        months.add((t.year, t.month))
     return [it["name"] for it in items if it["name"] not in keep]
 
 
@@ -260,9 +269,18 @@ class DirStore:
     def delete(self, name):
         (self.root / name).unlink(missing_ok=True)
 
+    def alert(self, title, body):
+        (self.root / "ALERT.txt").write_text(f"{title}\n{body}\n")
+
+    def resolve(self, body):
+        (self.root / "ALERT.txt").unlink(missing_ok=True)
+
 
 class GitHubReleaseStore:
-    """Backups as assets of one release in a private GitHub repo, via the gh CLI."""
+    """Backups as assets of one release in a private GitHub repo, via the gh CLI. Alerts are a single open
+    issue labelled backup-alert (GitHub notifies the repo owner), closed again on the next success."""
+
+    LABEL = "backup-alert"
 
     def __init__(self, repo, tag="tracking-backups"):
         if repo.lower() == APP_REPO:
@@ -296,6 +314,24 @@ class GitHubReleaseStore:
 
     def delete(self, name):
         self._gh("release", "delete-asset", self.tag, name, "--yes")
+
+    def _open_issue(self):
+        r = self._gh("issue", "list", "--label", self.LABEL, "--state", "open", "--json", "number")
+        n = json.loads(r.stdout)
+        return n[0]["number"] if n else None
+
+    def alert(self, title, body):
+        num = self._open_issue()
+        if num:
+            self._gh("issue", "comment", str(num), "--body", body)
+        else:
+            self._gh("label", "create", self.LABEL, "--color", "d73a4a", "--force")
+            self._gh("issue", "create", "--title", title, "--label", self.LABEL, "--body", body)
+
+    def resolve(self, body):
+        num = self._open_issue()
+        if num:
+            self._gh("issue", "close", str(num), "--comment", body)
 
 
 def make_store(dest):
@@ -387,39 +423,106 @@ def restore_latest(dest, target=None, force=False, name=None):
         return restore(z, target, force)
 
 
-def due(state, counts, now, last_success):
-    """'daily' when 24h passed since the last check, 'event' after a grading or collection run
-    (at most every EVENT_MIN_HOURS), else None."""
+def due(state, counts, now, last_success, event_min=None):
+    """'daily' when 24h passed since the last check; 'event' after a grading or collection run, at most every
+    `event_min` minutes (KPR_BACKUP_EVENT_MIN, default 30); else None. Unchanged content is never re-uploaded."""
+    event_min = EVENT_MIN_MINUTES if event_min is None else event_min
     if state.get("last_check") is None or now - datetime.fromisoformat(state["last_check"]) >= timedelta(hours=DAILY_HOURS):
         return "daily"
-    if last_success and now - datetime.fromisoformat(last_success) < timedelta(hours=EVENT_MIN_HOURS):
+    last = max(filter(None, (last_success, state.get("last_check"))), default=None)
+    if last and now - datetime.fromisoformat(last) < timedelta(minutes=event_min):
         return None
     base = state.get("history_counts") or {}
     grew = lambda k, n=1: (counts.get(k) or 0) - (base.get(k) or 0) >= n  # noqa: E731
-    if grew("preds_graded") or grew("picks_graded") or grew("match_results") or grew("map_odds_log", 5) \
-            or grew("preds", 200) or grew("slips"):
+    if grew("preds_graded") or grew("picks_graded") or grew("match_results") or grew("map_odds_log") \
+            or grew("preds", 50) or grew("picks") or grew("slips"):
         return "event"
     return None
 
 
-def daemon(dest, poll_min=15, db=None):
-    """Loop: daily backup plus event backups after grading / collection runs. Never exits on failure."""
+def health(state, counts, now, db_present):
+    return {"heartbeat_utc": now.isoformat(timespec="seconds"), "db_present": db_present,
+            "last_result": state.get("last_result"), "last_success": state.get("last_success"),
+            "last_name": state.get("last_name"), "last_error": state.get("last_error"),
+            "consecutive_failures": state.get("consecutive_failures", 0), "history_counts": counts,
+            "daemon_restarts": state.get("daemon_restarts", 0), "event_min": EVENT_MIN_MINUTES}
+
+
+def _publish_health(bs, h):
+    d = Path(tempfile.mkdtemp(prefix="kprlab-health-"))
+    try:
+        (d / HEALTH_NAME).write_text(json.dumps(h, indent=1, default=str))
+        bs.put(d / HEALTH_NAME)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def poll_once(dest, db=None, now=None):
+    """One daemon step: back up if due, publish a heartbeat next to the backups, and open/close the external alert."""
     db = Path(db or store.DB_PATH)
-    fh = logging.FileHandler(LOG_PATH)
-    fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    log.addHandler(fh)
+    now = now or datetime.now(timezone.utc)
+    bs = make_store(dest) if isinstance(dest, str) else dest
+    counts, err = {}, None
+    if db.exists():
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=60)
+        counts = history_counts(con)
+        con.close()
+        s = status()
+        reason = due(s, counts, now, s.get("last_success"))
+        if reason:
+            try:
+                backup(bs, reason, db, now)
+            except Exception as e:  # logged + recorded by backup()
+                err = e
+    s = status()
+    try:
+        if err is not None:
+            bs.alert("KPR Lab tracking backup failing", f"{now.isoformat(timespec='seconds')}: {type(err).__name__}: {err}\n"
+                     f"consecutive failures: {s.get('consecutive_failures')}")
+        elif s.get("alert_open"):
+            bs.resolve(f"{now.isoformat(timespec='seconds')}: backups healthy again ({s.get('last_name')})")
+        _status(alert_open=err is not None)
+        bs.check()
+        _publish_health(bs, health(status(), counts, now, db.exists()))
+    except Exception as e:
+        log.error("BACKUP HEALTH PUBLISH FAILED: %s", e)
+    return err
+
+
+def _log_to_file():
+    if not any(isinstance(h, logging.FileHandler) for h in log.handlers):
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(LOG_PATH)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        log.addHandler(fh)
     log.setLevel(logging.INFO)
+
+
+def daemon(dest, poll_min=15, db=None):
+    """Waits for tracking.db to exist, then backs up daily and after grading / collection runs. Never exits on failure."""
+    _log_to_file()
+    log.info("backup daemon started (pid %d, dest %s, event interval %d min)", os.getpid(), dest, EVENT_MIN_MINUTES)
     while True:
         try:
-            if db.exists():
-                now = datetime.now(timezone.utc)
-                con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=60)
-                counts = history_counts(con)
-                con.close()
-                s = status()
-                reason = due(s, counts, now, s.get("last_success"))
-                if reason:
-                    backup(dest, reason, db, now)
-        except Exception:  # already logged + in status; retry next poll
-            pass
+            poll_once(dest, db)
+        except Exception as e:
+            log.error("BACKUP DAEMON ERROR: %s", e)
         time.sleep(poll_min * 60)
+
+
+def supervise(cmd=None, max_restarts=None, backoff=(30, 300)):
+    """Run the daemon as a child process and restart it whenever it exits."""
+    _log_to_file()
+    cmd = cmd or [sys.executable, "-m", "cs2model.cli", "backup-daemon", *sys.argv[2:]]
+    n, delay = 0, backoff[0]
+    while max_restarts is None or n <= max_restarts:
+        t0 = time.time()
+        rc = subprocess.call(cmd)
+        n += 1
+        log.error("BACKUP DAEMON EXITED (code %s); restart #%d in %ds", rc, n, delay)
+        _status(daemon_restarts=status().get("daemon_restarts", 0) + 1, last_daemon_exit=datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        if max_restarts is not None and n > max_restarts:
+            break
+        time.sleep(delay)
+        delay = backoff[0] if time.time() - t0 > 3600 else min(backoff[1], delay * 2)
+    return n
