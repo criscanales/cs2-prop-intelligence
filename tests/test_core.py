@@ -714,3 +714,13 @@ def test_resettle_fixes_old_zero_grades_and_is_idempotent(tmp_path):
     assert _picks(con)[("underdog", "3")] == ("void", None) and _picks(con)[("underdog", "1+2")] == ("loss", 23.0)
     assert con.execute("SELECT line, p_over, model_mean, ts, start_time FROM preds ORDER BY rowid").fetchall() == before
     assert store.resettle(h, _res, con).empty  # second run changes nothing
+
+
+def test_match_card_odds_only_from_prematch_book_snapshots():
+    from cs2model.pipeline import prematch_odds_ok
+    st = pd.Timestamp("2026-10-21 14:00", tz="UTC")
+    assert prematch_odds_ok("pinnacle", st - pd.Timedelta(minutes=30), st)
+    assert prematch_odds_ok("polymarket", (st - pd.Timedelta(hours=2)).isoformat(), str(st))
+    assert not prematch_odds_ok("thunderpick", st + pd.Timedelta(minutes=5), st)  # in-play snapshot
+    assert not prematch_odds_ok("elo", st - pd.Timedelta(hours=1), st)  # model Elo is not market odds
+    assert not prematch_odds_ok("pinnacle", None, st) and not prematch_odds_ok("pinnacle", st, None)

@@ -77,6 +77,14 @@ def add_match_meta(slate, odds_at, meta=None):
     return slate
 
 
+def prematch_odds_ok(odds_source, odds_at, start_time):
+    """True only for a sportsbook/market snapshot taken before the listed start (never Elo, never in-play)."""
+    if odds_source not in ("pinnacle", "thunderpick", "polymarket"):
+        return False
+    at, st = pd.to_datetime(odds_at, utc=True, errors="coerce"), pd.to_datetime(start_time, utc=True, errors="coerce")
+    return not (pd.isna(at) or pd.isna(st)) and at < st
+
+
 def stake_cap(settings, payouts, platform):
     ok = payouts.get(platform, {}).get("verified", False)
     return settings["max_stake_pct"] if ok else min(settings["max_stake_pct"], settings.get("unverified_max_stake_pct", 0.005))

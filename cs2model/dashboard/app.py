@@ -17,7 +17,7 @@ import streamlit.components.v1 as components
 
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
-from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, line_sig, run_slate, stake_cap
+from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, line_sig, prematch_odds_ok, run_slate, stake_cap
 from cs2model.features.build import AWP_MIN_MAPS, AWP_PATH, attach_awp, awp_role
 from cs2model.inference.predict import Predictor, line_probs
 from cs2model.scraper.bo3_history import DATA as HDATA
@@ -248,18 +248,17 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
 .wi {font-size:.8rem;color:var(--tx2);border:1px dashed rgba(245,165,36,.6);border-radius:8px;padding:6px 10px;} .wi b {color:#fbbf24;}
-.ml {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-top:22px;}
+.ml {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin:4px 0 14px;}
 .ml-h {display:flex;justify-content:space-between;align-items:flex-start;gap:8px;} .ml-h b {font-size:.95rem;} .ml-h .mut {color:var(--mut);font-size:.75rem;}
 .ml-bo {font-size:.7rem;color:var(--tx2);border:1px solid var(--line2);border-radius:999px;padding:2px 9px;white-space:nowrap;}
 .ml-b {display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
 .ml-t {display:grid;grid-template-columns:1fr auto 1fr;align-items:center;text-align:center;margin:14px 0 10px;}
 .ml-t .logo {width:44px;height:44px;margin:0 auto 6px;display:block;} .ml-t b {display:block;font-size:.85rem;} .ml-t .vs {color:var(--mut);font-weight:700;}
-.ml-o {border:1px solid var(--line2);border-radius:8px;padding:10px 12px;} .ml-o.blow {border-color:rgba(239,68,68,.55);}
+.ml-o {border:1px solid var(--line2);border-radius:8px;padding:10px 12px;} .ml-na {color:var(--tx2);text-align:center;padding:10px 0 4px;font-size:.85rem;}
 .ml-k {display:flex;justify-content:space-between;align-items:center;font-size:.7rem;letter-spacing:.06em;color:var(--tx2);text-transform:uppercase;}
-.ml-tag {color:#f87171;border:1px solid rgba(239,68,68,.45);border-radius:999px;padding:1px 8px;text-transform:none;letter-spacing:0;}
 .ml-p {display:flex;justify-content:space-between;margin-top:8px;font-family:'JetBrains Mono',monospace;}
 .ml-p div:last-child {text-align:right;} .ml-p b {font-size:1.15rem;} .ml-p span {display:block;color:var(--tx2);font-size:.8rem;}
-.ml-bar {display:flex;height:7px;border-radius:999px;overflow:hidden;margin:8px 0 4px;gap:2px;} .ml-f {font-size:.7rem;color:var(--mut);text-align:center;}
+.ml-bar {display:flex;position:relative;height:7px;border-radius:999px;overflow:hidden;margin:8px 0 4px;gap:2px;} .ml-bar u {position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,.45);} .ml-f {font-size:.7rem;color:var(--mut);text-align:center;}
 @media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
 .ph-q {margin-top:10px;font-size:.75rem;color:var(--tx2);border-left:2px solid var(--line2);padding-left:8px;max-width:520px;}
 .ph-q.ok {color:#86efac;border-left-color:rgba(34,197,94,.6);}
@@ -901,28 +900,33 @@ ODDS_SRC = {"pinnacle": "Pinnacle", "polymarket": "Polymarket", "thunderpick": "
 
 
 def match_card(r):
-    p = r.get("p_series_win", np.nan)
-    if p != p:
-        return ""
+    """Informational only: teams, format, tier and the pre-match moneyline. Nothing here feeds the model."""
     day, clock, _ = start_info(getattr(r, "start_time", None))
-    blow = max(p, 1 - p) >= 0.65
-    ca, cb = ("#22c55e", "#f5a524") if p >= 0.5 else ("#f5a524", "#22c55e")
-    src = ODDS_SRC.get(r.odds_source, str(r.odds_source))
     ev, tier, et, at = r.get("event"), r.get("match_tier"), r.get("event_type"), r.get("odds_at")
     ev = ev if isinstance(ev, str) and ev else "Event unknown"
     tier = f"Tier {tier.upper()}" if isinstance(tier, str) and tier else "Tier unknown"
     et = {"lan": "LAN", "online": "Online"}.get(et, "LAN/online unknown")
-    at = f"odds checked {pd.Timestamp(at):%H:%M} UTC" if at is not None and at == at else "no market odds listed"
+    p = r.get("p_series_win", np.nan)
+    ok = p == p and prematch_odds_ok(r.odds_source, at, getattr(r, "start_time", None))
+    if ok:
+        ca, cb = ("#22c55e", "#f5a524") if p >= 0.5 else ("#f5a524", "#22c55e")
+        src = ODDS_SRC.get(r.odds_source, str(r.odds_source))
+        pa = round(100 * p)
+        odds = (f'<div class="ml-p"><div><b style="color:{ca}">{pa}%</b><span>{american(p)}</span></div>'
+                f'<div><b style="color:{cb}">{100 - pa}%</b><span>{american(1 - p)}</span></div></div>'
+                f'<div class="ml-bar"><i style="width:{p:.1%};background:{ca}"></i><i style="flex:1;background:{cb}"></i>'
+                '<u style="left:30%"></u><u style="left:70%"></u></div>'
+                f'<div class="ml-f">Implied win % (no-vig) · {html.escape(src)} · pre-match snapshot '
+                f'{pd.Timestamp(at).tz_convert("UTC"):%b %d %H:%M} UTC · ticks at 30% / 70%</div>')
+    else:
+        odds = '<div class="ml-na">Pre-match odds unavailable</div>'
     return (f'<div class="ml"><div class="ml-h"><div><b>{html.escape(ev)}</b><br><span class="mut">{html.escape(f"{day} {clock}".strip()) or "Upcoming"}</span></div>'
-            f'<span class="ml-bo">BO{int(r.get("best_of", 3))}</span></div>'
-            f'<div class="ml-b"><span class="ml-bo">{tier}</span><span class="ml-bo">{et}</span></div>'
+            f'<div class="ml-b"><span class="ml-bo">BO{int(r.get("best_of", 3))}</span><span class="ml-bo">{tier}</span>'
+            f'<span class="ml-bo">{et}</span></div></div>'
             f'<div class="ml-t"><div>{logo(r.team_id)}<b>{html.escape(r.team)}</b></div><span class="vs">VS</span>'
             f'<div>{logo(r.opp_id)}<b>{html.escape(r.opponent)}</b></div></div>'
-            f'<div class="ml-o {"blow" if blow else ""}"><div class="ml-k">Moneyline{"<span class=ml-tag>⚠ Potential blowout</span>" if blow else ""}</div>'
-            f'<div class="ml-p"><div><b style="color:{ca}">{p:.0%}</b><span>{american(p)}</span></div>'
-            f'<div><b style="color:{cb}">{1 - p:.0%}</b><span>{american(1 - p)}</span></div></div>'
-            f'<div class="ml-bar"><i style="width:{p:.1%};background:{ca}"></i><i style="flex:1;background:{cb}"></i></div>'
-            f'<div class="ml-f">Implied win % · fair odds from {html.escape(src)} · {at} · avg map win {r.p_map_win:.0%}</div></div></div>')
+            f'<div class="ml-o"><div class="ml-k">Moneyline</div>{odds}</div>'
+            '<div class="ml-f" style="margin-top:6px">Information only: does not change projections, edges, confidence or picks.</div></div>')
 
 
 def round_score(won, a, b):
@@ -1040,8 +1044,7 @@ def series_chart(r, h, scope):
         fig.update_layout(barcornerradius=6)
     except ValueError:
         pass
-    cl, cr = st.columns([3, 1.15])
-    cr.markdown(match_card(r), unsafe_allow_html=True)
+    cl = st.container()
     seg = " · ".join(f"M{m} {'bottom' if k == 0 else 'top' if k == len(maps) - 1 else 'middle'}" for k, m in enumerate(maps))
     cl.markdown(f'<div class="lg"><span><i style="background:{OVERC[0]}"></i><i style="background:{OVERC[1]}"></i>Total ≥ line</span>'
                 f'<span><i style="background:{UNDERC[0]}"></i><i style="background:{UNDERC[1]}"></i>Total below line</span>'
@@ -1128,6 +1131,7 @@ def player_detail(r, i, scope):
     r = line_stepper(r, i, scope)
     h = pred.hist[pred.hist.player_id == r.player_id].sort_values(["date", "map_number"], ascending=False)
     h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
+    st.markdown(match_card(r), unsafe_allow_html=True)
     series_chart(r, h, scope)
     d = details.get(i, {})
     st.markdown(f'<div class="sect">Map predictions · vs {html.escape(r.opponent)}</div>', unsafe_allow_html=True)
