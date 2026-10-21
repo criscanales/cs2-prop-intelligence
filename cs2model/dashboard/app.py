@@ -246,6 +246,8 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .ss-m {border-color:rgba(232,117,42,.45);background:linear-gradient(180deg,rgba(232,117,42,.07),var(--panel));}
 .nr {border-bottom:1px dotted var(--mut);cursor:help;}
 .ss-na {font-size:.78rem;color:var(--mut);padding:6px 0;}
+.ss.ss-low {border-style:dashed;} .ss.ss-low .ss-r .v {color:var(--tx2);} .ss.ss-low .ss-r .f.pos {color:var(--tx2);}
+.ss-w {font-size:.68rem;color:#fbbf24;margin:-2px 0 6px;letter-spacing:.02em;}
 .lg {display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-size:.75rem;color:var(--tx2);margin:2px 0 -20px;position:relative;z-index:1;}
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
@@ -961,6 +963,9 @@ def wl_color(txt):
     return "#4ade80" if txt.startswith("W") else "#f87171" if txt.startswith("L") else "#a3acb9"
 
 
+SMALL_N = 5  # fewer past series than this: hit rates are flagged as a small sample
+
+
 def series_chart(r, h, scope):
     maps = [m for m in r.maps if m <= 3] or list(r.maps)
     over_side = r.side == "over"
@@ -989,10 +994,12 @@ def series_chart(r, h, scope):
         hit = (d.total > r.line) if over_side else (d.total < r.line)
         push, avg = int((d.total == r.line).sum()), d.total.mean()
         diff = avg - r.line
-        tags = (" · small sample" if n < 3 else "") + (f" · {push} push" if push else "")
-        return (f'<div class="ss"><div class="ss-h"><b>{lbl}</b><span>{n} past series{tags}</span></div>'
+        low = n < SMALL_N
+        tags = f" · {push} push" if push else ""
+        warn = f'<div class="ss-w">Small sample: {n} series, not reliable</div>' if low else ""
+        return (f'<div class="ss{" ss-low" if low else ""}"><div class="ss-h"><b>{lbl}</b><span>n={n} series{tags}</span></div>{warn}'
                 f'<div class="ss-r"><span class="k">{"Over" if over_side else "Under"} hit</span><span class="v">{hit.mean():.0%}</span>'
-                f'<span class="f">{int(hit.sum())}/{n}</span></div>'
+                f'<span class="f">{int(hit.sum())} of {n}</span></div>'
                 f'<div class="ss-r"><span class="k">Avg</span><span class="v">{avg:.1f}</span>'
                 f'<span class="f {"pos" if (diff > 0) == over_side and diff != 0 else "neg"}">{diff:+.1f} vs line</span></div></div>')
     st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
@@ -1073,7 +1080,7 @@ def series_chart(r, h, scope):
                 '<span><b style="color:#4ade80">W</b>/<b style="color:#f87171">L</b> 13–9 = team rounds–opponent rounds</span>'
                 + ('<span><b style="color:#fbbf24">⚠</b> high-round map</span>' if show_ot else "")
                 + ('<span><b style="color:#93c5fd">✓</b> blowout map</span>' if show_bl else "") +
-                f'<span class="mut">{len(v)} series shown · hover a bar for details</span></div>', unsafe_allow_html=True)
+                f'<span class="mut">{len(v)} series shown{f" (filtered, {len(piv)} of {total} match)" if nf else ""} · hover a bar for details</span></div>', unsafe_allow_html=True)
     cl.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
 
 
