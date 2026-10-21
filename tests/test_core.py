@@ -765,3 +765,77 @@ def test_history_filters_combine_and_handle_empty():
     assert list(HF.apply(sm, {"opp": ["G2"], "result": "Lost"})) == []
     assert HF.n_active({"opp": [], "result": "Any", "lan": "Any", "rounds": (22, 46)}, (22, 46)) == 0
     assert HF.n_active({"opp": ["G2"], "result": "Won", "rounds": (30, 46)}, (22, 46)) == 3
+
+
+def test_book_parsers_keep_quoted_map_prices_apart_from_inferred():
+    from cs2model.scraper.books import polymarket_match
+
+    def mk(kind, q, outs, bid, ask):
+        return {"sportsMarketType": kind, "question": q, "outcomes": json.dumps(outs), "bestBid": bid, "bestAsk": ask}
+
+    e = {"title": "Counter-Strike: A vs B (BO3) - Cup", "startTime": "2026-10-19T18:00:00Z", "markets": [
+        mk("moneyline", "A vs B", ["A", "B"], 0.61, 0.62), mk("child_moneyline", "A vs B - Map 1 Winner", ["B", "A"], 0.40, 0.44)]}
+    mo = polymarket_match(e)
+    assert mo.p_map_quoted == {1: pytest.approx(0.58)}
+    assert set(mo.p_map_team1) == {1, 2, 3} and mo.p_map_team1[2] == pytest.approx(odds.map_prob_from_series(0.615, 3))
+
+
+def _prov(**kw):
+    from cs2model.inference.predict import map_odds_record
+    from cs2model.types import MatchOdds
+    st = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=2)
+    mo = MatchOdds("polymarket", "Bravo", "Alpha", st, 3, p_series_team1=0.30, p_map_team1={1: 0.40, 2: 0.37, 3: 0.37},
+                   p_map3=0.45, p_map_quoted={1: 0.40})
+    for k, v in kw.items():
+        setattr(mo, k, v)
+    p_map = {j: 1 - v for j, v in mo.p_map_team1.items()}  # oriented to team a = Alpha
+    return map_odds_record(mo, 1, 2, "Alpha", "Bravo", st, 3, p_map, 0.70, 0.44, "v9"), st
+
+
+def test_map_odds_record_labels_quoted_vs_inferred_and_orients_to_team_a():
+    r, st = _prov()
+    assert (r["src_map1"], r["src_map2"], r["src_map3"]) == ("quoted", "inferred", "inferred")
+    assert r["p_series_a"] == pytest.approx(0.70) and r["p_map1_quoted"] == pytest.approx(0.60) and r["p_map2_quoted"] is None
+    assert r["p_map2_used"] == pytest.approx(0.63) and r["p_map3_played"] == pytest.approx(0.44)
+    assert (r["match_key"], r["model_version"], r["start_time"]) == ("1-2", "v9", st.isoformat())
+    assert _prov(p_map_quoted=None)[0]["src_map1"] == "unknown"
+
+
+def test_map_odds_log_is_append_only_deduped_and_pre_match_only(tmp_path):
+    import sqlite3
+    con = store.connect(tmp_path / "t.db")
+    r, st = _prov()
+    snap = pd.Timestamp.now(tz="UTC").floor("s")
+    assert store.log_map_odds([r], snap, con) == 1
+    assert store.log_map_odds([r], snap, con) == 0  # same source, match and snapshot
+    assert store.log_map_odds([r], snap + pd.Timedelta(minutes=5), con) == 0  # unchanged inputs
+    assert store.log_map_odds([dict(r, p_series_a=0.72)], snap + pd.Timedelta(minutes=10), con) == 1  # the price moved
+    assert store.log_map_odds([dict(r, source="pinnacle")], snap, con) == 1  # another source, same match
+    assert store.log_map_odds([dict(r, source="thunderpick")], st, con) == 0  # snapshot not before start
+    assert con.execute("SELECT count(*) FROM map_odds_log").fetchone()[0] == 3
+    with pytest.raises(sqlite3.DatabaseError):
+        con.execute("UPDATE map_odds_log SET p_series_a = 0.5")
+    with pytest.raises(sqlite3.DatabaseError):
+        con.execute("DELETE FROM map_odds_log")
+
+
+def test_match_results_auto_graded_once_series_finishes(tmp_path):
+    con = store.connect(tmp_path / "t.db")
+    st = pd.Timestamp.now(tz="UTC").floor("h") - pd.Timedelta(hours=6)
+    for key, a, b, src in (("1-2", 1, 2, "quoted"), ("1-3", 1, 3, "inferred")):
+        con.execute("INSERT INTO map_odds_log (snapshot_ts, source, match_key, team_a_id, team_b_id, start_time, best_of, t3, "
+                    "p_series_a, src_map1, src_map2, p_map3_played) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    ((st - pd.Timedelta(hours=1)).isoformat(), "pinnacle", key, a, b, st.isoformat(), 3, 0, 0.75, src, src, 0.40))
+    con.commit()
+    h = _series_hist([1, 0, 1], st, played=2)
+    store.grade(h, _res, con)
+    assert con.execute("SELECT count(*) FROM match_results").fetchone()[0] == 0  # 1-1 after two maps: not finished
+    h3 = _series_hist([1, 0, 1], st)
+    h20 = _series_hist([1, 1], st).assign(match_id=8, opp_id=lambda d: d.opp_id.replace(2, 3), team_id=lambda d: d.team_id.replace(2, 3))
+    store.grade(pd.concat([h3, h20]), _res, con)
+    store.grade(pd.concat([h3, h20]), _res, con)  # idempotent
+    res = {r[0]: r[1:] for r in con.execute("SELECT match_key, maps_played, map3_played, a_won_map1, a_won_map3, a_won_series FROM match_results")}
+    assert res == {"1-2": (3, 1, 1, 1, 1), "1-3": (2, 0, 1, None, 1)}
+    rep = store.map3_report(con).set_index("inputs")
+    assert rep.loc["maps 1-2 quoted", "actual_map3"] == 1.0 and rep.loc["maps 1-2 inferred", "actual_map3"] == 0.0
+    assert (rep.matches == 1).all() and (rep.pred_map3 == 0.40).all() and set(rep.fav_band) == {"(0.65, 0.8]"}

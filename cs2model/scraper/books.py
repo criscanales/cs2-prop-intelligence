@@ -122,6 +122,7 @@ def parse_pinnacle(matchups, markets) -> list[MatchOdds]:
     for mo in out.values():
         for k in mo.rounds_ladder:
             mo.rounds_ladder[k].sort()
+        mo.p_map_quoted = dict(mo.p_map_team1)
         _fill_series(mo)
     return list(out.values())
 
@@ -147,6 +148,7 @@ def fetch_thunderpick_via_bo3(ttl=300, days_ahead=2) -> list[MatchOdds]:
                 mo = MatchOdds("thunderpick", n1, n2, _t(m.get("start_date")), int(m.get("bo_type") or 3))
                 mo.p_series_team1 = devig(float(c1["coeff"]), float(c2["coeff"]))[0]
                 mo.series_dec = (float(c1["coeff"]), float(c2["coeff"]))
+                mo.p_map_quoted = dict(mo.p_map_team1)
                 _fill_series(mo)
                 out.append(mo)
     return out
@@ -198,6 +200,7 @@ def polymarket_match(e) -> MatchOdds | None:
         return None
     for k in mo.rounds_ladder:
         mo.rounds_ladder[k].sort()
+    mo.p_map_quoted = dict(mo.p_map_team1)
     _fill_series(mo)
     return mo
 

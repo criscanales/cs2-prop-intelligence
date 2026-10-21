@@ -83,6 +83,33 @@ def series_source(odds):
     return "maps" if odds.p_map_team1 else None
 
 
+def map_odds_record(odds, a, b, name_a, name_b, start_time, best_of, p_map, p_series, p_map3, model_version, t3=False):
+    """Provenance of the map-win inputs one match was priced with, oriented to team a: per map slot, "quoted" when
+    the book priced that map, "inferred" when `_fill_series` filled it from the series moneyline (`unknown` if the
+    book object predates provenance). `p_map*_used` are the values pricing actually used."""
+    flip = team_similarity(odds.team1, name_a) < team_similarity(odds.team2, name_a)
+
+    def o(v):
+        return None if v is None else float(1 - v if flip else v)
+
+    quoted = odds.p_map_quoted
+    st = pd.Timestamp(start_time) if start_time is not None else None
+    st = None if st is None else st.tz_localize("UTC") if st.tzinfo is None else st.tz_convert("UTC")
+    rec = {"source": odds.source, "match_key": f"{a}-{b}", "team_a_id": int(a), "team_b_id": int(b),
+           "team_a": name_a, "team_b": name_b,
+           "start_time": st.isoformat() if st is not None else None,
+           "best_of": int(best_of), "t3": int(bool(t3)), "p_series_a": o(odds.p_series_team1),
+           "p_map3_played": float(p_map3), "p_map3_played_book": odds.p_map3, "model_version": str(model_version),
+           "pred_ts": pd.Timestamp.now(tz="UTC").isoformat(timespec="seconds")}
+    for j in (1, 2, 3):
+        q = None if quoted is None else quoted.get(j)
+        rec[f"p_map{j}_quoted"] = o(q)
+        rec[f"p_map{j}_used"] = float(p_map[j]) if j <= best_of and j in p_map else None
+        rec[f"src_map{j}"] = (None if j > best_of else "unknown" if quoted is None else
+                              "quoted" if q is not None else "inferred" if j in odds.p_map_team1 else None)
+    return rec
+
+
 def book_prices(odds, name_a):
     """The book's quoted decimal series prices as (team a, team b), or None (no quote, or Polymarket mid prices)."""
     if odds is None or not odds.series_dec:
@@ -385,6 +412,7 @@ class Predictor:
         groups, t3_lines, t3_hidden, hidden_rows = {}, set(), {}, {}
         price3, collect3 = bool(self.settings.get("price_tier3", False)), bool(self.settings.get("collect_tier3", True))
         self.t3_collected = pd.DataFrame()
+        self.map_odds_log = []
         unmatched, seen_keys = [], set()
         now = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
         for ln in lines:
@@ -458,6 +486,11 @@ class Predictor:
             if odds is not None and odds.p_series_team1 is not None:  # the book's own series price, oriented to team a
                 flip = team_similarity(odds.team1, self.tnames[a]) < team_similarity(odds.team2, self.tnames[a])
                 p_series = 1 - odds.p_series_team1 if flip else odds.p_series_team1
+            if odds is not None:
+                st0 = min((ln.start_time for ln, _, _ in c["lns"] if ln.start_time is not None), default=None)
+                self.map_odds_log.append(map_odds_record(
+                    odds, a, c["b"], self.tnames.get(a), self.tnames.get(c["b"]), st0, c["best_of"], p_map, p_series, p_m3,
+                    self.m.version, any(id(ln) in t3_lines for ln, _, _ in c["lns"])))
             for ln, pid, tid in c["lns"]:
                 pmf = out["pmfs"][(str(pid), ln.stat, tuple(ln.maps))]
                 k = np.arange(len(pmf))

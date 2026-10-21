@@ -1,4 +1,4 @@
-"""python -m cs2model.cli {crawl,train,slate,grade,refresh}"""
+"""python -m cs2model.cli {crawl,train,slate,grade,regrade,map3-report,refresh}"""
 import argparse
 import logging
 import time
@@ -21,6 +21,7 @@ def main(argv=None):
     sub.add_parser("grade", help="grade logged picks/slips against bo3 results")
     rg = sub.add_parser("regrade", help="re-check settled picks/preds against bo3 results and fix wrong settlements")
     rg.add_argument("--dry-run", action="store_true")
+    sub.add_parser("map3-report", help="predicted vs actual Map 3 rate for finished BO3s, by favourite strength and odds provenance")
     r = sub.add_parser("refresh", help="crawl recent days, grade, retrain (optional), re-price; loop")
     r.add_argument("--every", type=int, default=0, help="minutes between runs (0 = once)")
     r.add_argument("--retrain", action="store_true")
@@ -47,6 +48,10 @@ def main(argv=None):
         regrade_cmd(a.dry_run)
     elif a.cmd == "grade":
         grade_cmd()
+    elif a.cmd == "map3-report":
+        from .tracking import store
+        rep = store.map3_report()
+        print(rep.to_string(index=False) if len(rep) else "no finished BO3s with logged map odds yet")
     elif a.cmd == "refresh":
         while True:
             from .scraper.bo3_history import crawl

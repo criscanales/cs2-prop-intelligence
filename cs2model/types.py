@@ -32,6 +32,7 @@ class MatchOdds:
     p_overtime: dict = field(default_factory=dict)  # map number -> prob
     p_map3: Optional[float] = None
     series_dec: Optional[tuple] = None  # quoted decimal series prices (team1, team2), with vig; sportsbooks only
+    p_map_quoted: Optional[dict] = None  # map number -> devigged prob the book actually quoted (before series inference)
 
 
 @dataclass

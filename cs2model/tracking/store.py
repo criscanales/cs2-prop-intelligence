@@ -26,7 +26,25 @@ CREATE TABLE IF NOT EXISTS preds (
 CREATE TABLE IF NOT EXISTS slips (
   id INTEGER PRIMARY KEY, created TEXT, platform TEXT, play TEXT, legs TEXT, p_all REAL,
   ev REAL, stake REAL, hit_dist TEXT, hits INTEGER, payout REAL, profit REAL);
+CREATE TABLE IF NOT EXISTS map_odds_log (
+  id INTEGER PRIMARY KEY, snapshot_ts TEXT, pred_ts TEXT, source TEXT, match_key TEXT, team_a_id INTEGER,
+  team_b_id INTEGER, team_a TEXT, team_b TEXT, start_time TEXT, best_of INTEGER, t3 INTEGER, p_series_a REAL,
+  p_map1_quoted REAL, p_map2_quoted REAL, p_map3_quoted REAL, p_map1_used REAL, p_map2_used REAL, p_map3_used REAL,
+  src_map1 TEXT, src_map2 TEXT, src_map3 TEXT, p_map3_played REAL, p_map3_played_book REAL, model_version TEXT,
+  inputs_hash TEXT, UNIQUE(source, match_key, start_time, snapshot_ts));
+CREATE TRIGGER IF NOT EXISTS map_odds_log_no_update BEFORE UPDATE ON map_odds_log
+  BEGIN SELECT RAISE(ABORT, 'map_odds_log is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS map_odds_log_no_delete BEFORE DELETE ON map_odds_log
+  BEGIN SELECT RAISE(ABORT, 'map_odds_log is append-only'); END;
+CREATE TABLE IF NOT EXISTS match_results (
+  match_key TEXT, start_time TEXT, bo3_match_id INTEGER, best_of INTEGER, maps_played INTEGER, map3_played INTEGER,
+  a_won_map1 INTEGER, a_won_map2 INTEGER, a_won_map3 INTEGER, a_won_series INTEGER, graded_ts TEXT,
+  PRIMARY KEY(match_key, start_time));
 """
+
+MAP_ODDS_FIELDS = ["pred_ts", "source", "match_key", "team_a_id", "team_b_id", "team_a", "team_b", "start_time", "best_of",
+                   "t3", "p_series_a", "p_map1_quoted", "p_map2_quoted", "p_map3_quoted", "p_map1_used", "p_map2_used",
+                   "p_map3_used", "src_map1", "src_map2", "src_map3", "p_map3_played", "p_map3_played_book", "model_version"]
 
 
 def connect(path=DB_PATH):
@@ -82,6 +100,84 @@ def log_preds(slate, con=None):
     con.executemany("INSERT OR REPLACE INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, "
                     "p_over, t3, p_over_raw) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     con.commit()
+
+
+def _inputs_hash(r):
+    import hashlib
+    keys = [k for k in MAP_ODDS_FIELDS if k not in ("pred_ts", "team_a", "team_b")]
+    return hashlib.sha1(json.dumps([r.get(k) if not isinstance(r.get(k), float) else round(r[k], 6) for k in keys]).encode()).hexdigest()
+
+
+def log_map_odds(records, snapshot_ts, con=None):
+    """Append one map-odds provenance row per (source, match, snapshot). Pre-match snapshots only; a snapshot whose inputs
+    are identical to that source/match's latest row (same book prices, same model version) is not appended again."""
+    con = con or connect()
+    snap = pd.Timestamp(snapshot_ts)
+    snap = snap.tz_localize("UTC") if snap.tzinfo is None else snap.tz_convert("UTC")
+    n = 0
+    for r in records:
+        if not r.get("start_time") or pd.Timestamp(r["start_time"]) <= snap:
+            continue
+        h = _inputs_hash(r)
+        last = con.execute("SELECT inputs_hash FROM map_odds_log WHERE source=? AND match_key=? AND start_time=? "
+                           "ORDER BY snapshot_ts DESC, id DESC LIMIT 1", (r["source"], r["match_key"], r["start_time"])).fetchone()
+        if last and last[0] == h:
+            continue
+        cur = con.execute(f"INSERT OR IGNORE INTO map_odds_log (snapshot_ts, {', '.join(MAP_ODDS_FIELDS)}, inputs_hash) "
+                          f"VALUES ({', '.join('?' * (len(MAP_ODDS_FIELDS) + 2))})",
+                          [snap.isoformat(timespec="seconds")] + [r.get(k) for k in MAP_ODDS_FIELDS] + [h])
+        n += cur.rowcount
+    con.commit()
+    return n
+
+
+def grade_match_results(hist, con=None):
+    """Record the map-by-map result of every logged match once its series is decided in `hist` (never before)."""
+    con = con or connect()
+    todo = con.execute("SELECT DISTINCT m.match_key, m.start_time, m.team_a_id, m.team_b_id, m.best_of FROM map_odds_log m "
+                       "LEFT JOIN match_results r ON r.match_key = m.match_key AND r.start_time = m.start_time "
+                       "WHERE r.match_key IS NULL").fetchall()
+    now, n = pd.Timestamp.now(tz="UTC"), 0
+    for key, st, a, b, bo in todo:
+        st = pd.Timestamp(st)
+        if st > now:
+            continue
+        h = hist[(hist.team_id == a) & (hist.opp_id == b) & (hist.date >= st - pd.Timedelta(hours=3))
+                 & (hist.date <= st + pd.Timedelta(hours=12))]
+        if h.empty:
+            continue
+        h = h[h.match_id == h.match_id.mode().iloc[0]].drop_duplicates("map_number").sort_values("map_number")
+        if h.won.isna().any() or list(h.map_number) != list(range(1, len(h) + 1)):
+            continue
+        need, wins = int(bo) // 2 + 1, int(h.won.sum())
+        if max(wins, len(h) - wins) < need:
+            continue  # series not finished (or later maps not in history yet)
+        won = {int(m): int(w) for m, w in zip(h.map_number, h.won)}
+        con.execute("INSERT OR IGNORE INTO match_results VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (key, st.isoformat(), int(h.match_id.iloc[0]), int(bo), len(h), int(len(h) >= 3) if int(bo) == 3 else None,
+                     won.get(1), won.get(2), won.get(3), int(wins >= need), _now()))
+        n += 1
+    con.commit()
+    return n
+
+
+def map3_report(con=None, bands=(0.5, 0.65, 0.8, 1.0)):
+    """Predicted vs actual P(Map 3 played) for finished tier-1/2 BO3s, from each source's last pre-match snapshot,
+    by series-favourite strength and by whether maps 1-2 were quoted or inferred."""
+    con = con or connect()
+    d = pd.read_sql("SELECT m.*, r.map3_played FROM map_odds_log m JOIN match_results r ON r.match_key = m.match_key "
+                    "AND r.start_time = m.start_time WHERE m.best_of = 3 AND COALESCE(m.t3, 0) = 0 AND r.map3_played IS NOT NULL", con)
+    cols = ["source", "inputs", "fav_band", "matches", "pred_map3", "actual_map3"]
+    if d.empty:
+        return pd.DataFrame(columns=cols)
+    d = d.sort_values(["snapshot_ts", "id"]).groupby(["source", "match_key", "start_time"]).tail(1)
+    p = d.p_series_a.fillna(d[["p_map1_used", "p_map2_used"]].mean(axis=1))
+    d["fav_band"] = pd.cut(p.where(p >= 0.5, 1 - p), list(bands), include_lowest=True).astype(str)
+    d["inputs"] = ["maps 1-2 quoted" if a == b == "quoted" else "maps 1-2 inferred" if a == b == "inferred" else "mixed"
+                   for a, b in zip(d.src_map1, d.src_map2)]
+    g = d.groupby(["source", "inputs", "fav_band"]).agg(matches=("map3_played", "size"), pred_map3=("p_map3_played", "mean"),
+                                                         actual_map3=("map3_played", "mean")).reset_index()
+    return g[cols]
 
 
 def _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time):
@@ -246,6 +342,7 @@ def grade(hist: pd.DataFrame, resolve_player, con=None, payouts=None):
     hist = hist.copy()
     hist["date"] = pd.to_datetime(hist["date"], utc=True, format="ISO8601")
     grade_preds(hist, resolve_player, con)
+    grade_match_results(hist, con)
     n = 0
     for _, p in picks.iterrows():
         res = _settle(hist, resolve_player, p.player, p.team, p.opponent, p.stat, p.maps, p.start_time)
