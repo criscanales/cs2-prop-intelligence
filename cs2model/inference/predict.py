@@ -23,6 +23,7 @@ from ..names import norm_player, team_similarity
 from ..parlay.engine import load_yaml, single_breakeven
 from ..scraper.bo3_history import HIST_PATH
 from ..training.train import MODEL_DIR, shrunk_rate
+from ..training.tier3 import T3_TIERS
 from . import analytic as A
 from . import distribution as D
 from .simulate import MatchSpec, PlayerSpec, leg_totals, simulate_match
@@ -47,9 +48,17 @@ class Models:
         return cls(lgb.Booster(model_file=str(d / "kills_lgbm.txt")), lgb.Booster(model_file=str(d / "hs_lgbm.txt")),
                    joblib.load(d / "calibrators.joblib"), json.loads((d / "artifacts.json").read_text()), version)
 
-    def calibrate(self, stat, n_maps, p):
-        c = self.calibrators.get(f"{stat}_{'map' if n_maps == 1 else 'series'}")
+    def calibrate(self, stat, n_maps, p, t3=False):
+        key = f"{stat}_{'map' if n_maps == 1 else 'series'}"
+        if t3 and self.t3_validated(stat, n_maps):
+            key = f"t3_{key}"
+        c = self.calibrators.get(key)
         return float(c.predict([p])[0]) if c is not None else p
+
+    def t3_validated(self, stat, n_maps):
+        """A tier-3 calibrator for this market passed the held-out check (training/tier3.py)."""
+        key = f"{stat}_{'map' if n_maps == 1 else 'series'}"
+        return bool(self.art.get("tier3", {}).get("validated", {}).get(key)) and f"t3_{key}" in self.calibrators
 
 
 def series_win(p_map, best_of):
@@ -108,7 +117,9 @@ class Predictor:
         self.team_games = tt
         mm = self.m.art.get("map_model")
         self.map_model = MapModel(self.hist, mm) if mm else None
-        self.team_counts = team_map_counts(h, self.settings["tiers"], float(self.settings.get("team_maps_days", 92)))
+        days = float(self.settings.get("team_maps_days", 92))
+        self.team_counts = team_map_counts(h, self.settings["tiers"], days)
+        self.team_counts_t3 = team_map_counts(h, tuple(self.settings["tiers"]) + T3_TIERS, days)
         self._feat_hist = None
         self._rcache, self._feat_cache, self._price_cache, self._sim_cache = {}, {}, {}, {}
         self.hist_version = f"{len(self.hist)}:{self.hist.date.max()}:{int(self.hist.game_id.sum())}"
@@ -353,7 +364,7 @@ class Predictor:
         if not self._payouts_fixed:
             self.payouts = load_yaml("payouts.yaml")
         t0 = time.perf_counter()
-        groups = {}
+        groups, t3_lines = {}, set()
         unmatched, seen_keys = [], set()
         now = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
         for ln in lines:
@@ -386,8 +397,13 @@ class Predictor:
                 thr = min(thr, int(self.settings.get("demon_min_team_maps", 4)))
             low = [n for n, t in ((ln.team, t1), (ln.opponent, t2)) if self.team_counts.get(t, 0) < thr]
             if low:
-                unmatched.append(skip_record(ln, f"not enough tier-1/2 maps: {', '.join(low)}"))
-                continue
+                # opt-in: teams short on tier-1/2 maps are priced as tier 3 if they have enough tier-1-3 maps
+                ok3 = self.settings.get("price_tier3", False) and all(
+                    self.team_counts_t3.get(t, 0) >= self.settings["min_team_maps"] for t in (t1, t2))
+                if not ok3:
+                    unmatched.append(skip_record(ln, f"not enough tier-1/2 maps: {', '.join(low)}"))
+                    continue
+                t3_lines.add(id(ln))
             key = tuple(sorted((t1, t2)))
             groups.setdefault(key, []).append((ln, pid, t1))
 
@@ -425,7 +441,8 @@ class Predictor:
                 cdf = np.cumsum(pmf)
                 p_over_raw = float(pmf[k > ln.line].sum())
                 p_push = float(pmf[k == ln.line].sum())
-                p_over = self.m.calibrate(ln.stat, len(ln.maps), p_over_raw)
+                t3 = id(ln) in t3_lines
+                p_over = self.m.calibrate(ln.stat, len(ln.maps), p_over_raw, t3)
                 p_under = max(0.0, 1 - p_over - p_push)
                 f = Fi.loc[pid]
                 be_over = single_breakeven(ln.source, ln.over_decimal, self.payouts)
@@ -442,6 +459,7 @@ class Predictor:
                     "maps": ln.maps, "maps_label": (f"Map {ln.maps[0]}" if len(ln.maps) == 1 else "Maps " + "+".join(map(str, ln.maps))), "line": ln.line,
                     "odds_type": ln.odds_type, "model_mean": float(k @ pmf),
                     "team_maps": int(min(self.team_counts.get(a, 0), self.team_counts.get(c["b"], 0))),
+                    "t3": t3, "t3_validated": t3 and self.m.t3_validated(ln.stat, len(ln.maps)),
                     "q10": float(np.searchsorted(cdf, 0.1)), "q90": float(np.searchsorted(cdf, 0.9)),
                     "p_over": p_over, "p_under": p_under, "p_over_raw": p_over_raw, "side": side,
                     "p_push": p_push, "p_side": c_over if side == "over" else c_under, "breakeven": be_over if side == "over" else be_under,
@@ -632,7 +650,9 @@ def apply_rules(s: pd.DataFrame, st, con=None) -> pd.DataFrame:
                 moved_against = (r.line - fl) * (1 if r.side == "over" else -1) > 0
                 f.append(f"line moved {fl}->{r.line}" + (" against model" if moved_against else ""))
         flags.append("; ".join(f))
-        if f or r.edge < st["min_edge"]:
+        t3, t3_ok = r.get("t3") is True or r.get("t3") == 1, r.get("t3_validated") is True or r.get("t3_validated") == 1
+        min_edge = float(st.get("tier3_min_edge", 0.06)) if t3 else st["min_edge"]
+        if f or r.edge < min_edge or (t3 and not t3_ok):
             tiers.append("-")
         elif r.n_maps >= 30 and r.tenure >= 10 and r.edge >= 0.06 and r.odds_source != "elo":
             tiers.append("A")
@@ -640,20 +660,27 @@ def apply_rules(s: pd.DataFrame, st, con=None) -> pd.DataFrame:
             tiers.append("B")
         else:
             tiers.append("C")
-        lower_tier = r.get("team_maps", 10**6) < st.get("min_team_maps", 0)  # only demons get here (opt-in setting)
+        lower_tier = not t3 and r.get("team_maps", 10**6) < st.get("min_team_maps", 0)  # only demons get here (opt-in)
         if lower_tier and tiers[-1] in ("A", "B"):
             tiers[-1] = "C"
+        cap = str(st.get("tier3_max_conf", "B"))
+        if t3 and tiers[-1] != "-" and "ABC".index(tiers[-1]) < "ABC".index(cap):
+            tiers[-1] = cap
         stat_rate = (f"{r.kpr_10:.2f} KPR L10" if r.stat == "kills" else f"{r.hs_pct_10:.0%} HS L10") if r[
             "kpr_10" if r.stat == "kills" else "hs_pct_10"] == r["kpr_10" if r.stat == "kills" else "hs_pct_10"] else "form n/a"
         reasons.append(f"{r.side.upper()} {r.line}: model {r.model_mean:.1f} ({stat_rate}, opp allows {r.opp_dpr:.2f} KPR, "
                        f"{r.p_map_win:.0%} map win, {r.p_ot:.0%} OT/map" + (f", {r.p_map3:.0%} map 3" if 3 in r.maps else "") + ")")
+        pre = ("T3 · " if t3_ok else "T3 experimental (model-only estimate, tier-3 calibration not validated) · ") if t3 else ""
         if f:
-            why.append(f"Skip: {f[0]}")
-        elif r.edge < st["min_edge"]:
-            why.append(f"No bet: edge {r.edge:+.1%} < {st['min_edge']:.0%} (mean {r.model_mean:.1f} vs {r.line:g})")
+            why.append(f"{pre}Skip: {f[0]}")
+        elif t3 and not t3_ok:
+            why.append(f"{pre}{r.side.upper()} {r.line:g}: mean {r.model_mean:.1f}, P {r.p_side:.0%} vs {r.breakeven:.0%}")
+        elif r.edge < min_edge:
+            why.append(f"{pre}No bet: edge {r.edge:+.1%} < {min_edge:.0%} (mean {r.model_mean:.1f} vs {r.line:g})")
         else:
-            why.append(f"{r.side.upper()} {r.line:g}: mean {r.model_mean:.1f}, {stat_rate}, P {r.p_side:.0%} vs {r.breakeven:.0%} needed"
-                       + (f" · lower-tier team ({r.team_maps} tier-1/2 maps), capped at C" if lower_tier else ""))
+            why.append(f"{pre}{r.side.upper()} {r.line:g}: mean {r.model_mean:.1f}, {stat_rate}, P {r.p_side:.0%} vs {r.breakeven:.0%} needed"
+                       + (f" · lower-tier team ({r.team_maps} tier-1/2 maps), capped at C" if lower_tier else "")
+                       + (f" · tier 3, capped at {cap}" if t3 else ""))
     s = s.copy()
     s["flags"], s["tier"], s["reason"], s["why"] = flags, tiers, reasons, why
     s["plus_ev"] = s.tier != "-"

@@ -134,9 +134,9 @@ def train(hist=None, out_dir=None, quick_start=False):
     payouts = load_yaml("payouts.yaml")
     be = breakeven_per_leg(payouts["prizepicks"]["plays"]["power_2"])
     hist = hist if hist is not None else pd.read_csv(HIST_PATH)
-    feat = build_features(hist)
+    feat_all = build_features(hist)
     # features use every crawled map as history; training/evaluation only on tier-1/2 maps
-    feat = feat[feat.tier.isin(settings["tiers"]) & (feat.n_maps >= MIN_HISTORY) & feat.kills.notna() & feat.headshots.notna() & (feat.rounds > 0)]
+    feat = feat_all[feat_all.tier.isin(settings["tiers"]) & (feat_all.n_maps >= MIN_HISTORY) & feat_all.kills.notna() & feat_all.headshots.notna() & (feat_all.rounds > 0)]
     feat = feat.reset_index(drop=True)
     feat["split"] = time_split(feat)
     tr, va, te = (feat[feat.split == s].reset_index(drop=True) for s in ("train", "val", "test"))
@@ -246,6 +246,13 @@ def train(hist=None, out_dir=None, quick_start=False):
     log.info("shrink toward recent form: %s", report["shrink"])
     imp = pd.Series(kill_model.feature_importance("gain"), index=FEATURES).sort_values(ascending=False)
     report["feature_importance_kills"] = (imp / imp.sum()).head(20).round(4).to_dict()
+
+    from . import tier3
+    t3_cal, report["tier3"] = tier3.fit(feat_all, lgbm_rates, art, calibrators, report["split_dates"], be,
+                                        float(settings.get("tier3_min_edge", 0.06)), row_pmfs, series_pairs, MIN_HISTORY)
+    calibrators.update(t3_cal)
+    art["tier3"] = tier3.summary(report["tier3"])
+    log.info("tier-3 calibration validated: %s", art["tier3"]["validated"])
 
     from ..maps import pool as map_pool
     art["map_model"], report["map_model"] = map_pool.train(hist)

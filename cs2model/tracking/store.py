@@ -33,6 +33,9 @@ def connect(path=DB_PATH):
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(path)
     con.executescript(SCHEMA)
+    if "t3" not in {r[1] for r in con.execute("PRAGMA table_info(picks)")}:
+        con.execute("ALTER TABLE picks ADD COLUMN t3 INTEGER DEFAULT 0")  # tier-3 picks, tracked separately
+        con.commit()
     return con
 
 
@@ -127,10 +130,10 @@ def log_picks(df: pd.DataFrame, con=None):
     con = con or connect()
     cols = ["source", "player", "team", "opponent", "stat", "maps", "line", "side", "p_side", "breakeven",
             "edge", "ev", "tier", "model_mean", "start_time"]
-    rows = [(_now(), *[(_maps(r[c]) if c == "maps" else (None if pd.isna(r[c]) else r[c])) for c in cols])
-            for _, r in df.iterrows()]
+    rows = [(_now(), *[(_maps(r[c]) if c == "maps" else (None if pd.isna(r[c]) else r[c])) for c in cols],
+             int(r.get("t3") is True or r.get("t3") == 1)) for _, r in df.iterrows()]
     con.executemany("INSERT OR IGNORE INTO picks (created, source, player, team, opponent, stat, maps, line, side, "
-                    "p_model, breakeven, edge, ev, tier, model_mean, start_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "p_model, breakeven, edge, ev, tier, model_mean, start_time, t3) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     [tuple(str(x) if isinstance(x, pd.Timestamp) else x for x in r) for r in rows])
     con.commit()
 
@@ -220,4 +223,7 @@ def performance(con=None):
             "avg_clv": p.clv.mean(), "pct_beat_close": (p.clv > 0).mean(),
             "slips": len(s), "slip_profit": float(s.profit.sum()) if len(s) else 0.0,
             "slip_roi": float(s.profit.sum() / s.stake.sum()) if len(s) and s.stake.sum() else None}
+    p["group"] = p.t3.fillna(0).astype(int).map({0: "Tier 1/2", 1: "Tier 3"})
+    summ["by_group"] = p.groupby("group").agg(picks=("win", "size"), hit_rate=("win", "mean"), flat_roi=("roi", "mean"),
+                                              avg_edge=("edge", "mean"), avg_clv=("clv", "mean")).reset_index().to_dict("records")
     return summ, p, s

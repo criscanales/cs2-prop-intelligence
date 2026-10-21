@@ -632,6 +632,11 @@ def play_card(r, help_edge="", help_tier=""):
         plat += (f'<span class="badge b-new" title="PrizePicks {ot} line (over only). Priced at the standard payout unless '
                  f'you set one in payouts.yaml; demons pay more, so the edge shown is a lower bound.">{ot.title()}</span>')
     tier = r.tier if r.tier in ("A", "B") else "tier"
+    if bool(getattr(r, "t3", False)):
+        plat += ('<span class="badge b-new" title="Tier-3 match: priced with the tier-3 calibration, needs a larger edge, '
+                 'confidence capped">T3</span>' if getattr(r, "t3_validated", False) else
+                 '<span class="badge b-new" title="Tier-3 match: experimental model-only estimate. The tier-3 calibration '
+                 'for this market is not validated, so it is never a +EV pick.">T3 experimental</span>')
     chg = getattr(r, "chg", "")
     new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
     be = float(min(1.0, max(0.0, r.breakeven)))
@@ -671,6 +676,13 @@ with st.sidebar:
                              f"(normally {settings['min_team_maps']}). These are capped at confidence C.")
     if st.session_state.setdefault("low_dem", low_dem) != low_dem:
         st.session_state.low_dem, st.session_state.force_refresh = low_dem, True
+    t3_on = st.toggle("Price tier-3 lines (T3)", value=bool(settings.get("price_tier3", False)),
+                      help=f"Also price teams short on tier-1/2 maps if they have {settings['min_team_maps']}+ tier 1-3 maps. "
+                           f"Uses a tier-3 calibration, needs a {float(settings.get('tier3_min_edge', 0.06)):.0%} edge and is "
+                           f"capped at confidence {settings.get('tier3_max_conf', 'B')}. Markets whose tier-3 calibration "
+                           "isn't validated show as experimental estimates only.")
+    if st.session_state.setdefault("t3_on", t3_on) != t3_on:
+        st.session_state.t3_on, st.session_state.force_refresh = t3_on, True
     every = max(60, int(settings.get("auto_refresh_sec", 120)))
     forced = st.session_state.pop("force_refresh", False)
     job = st.session_state.get("job")
@@ -678,6 +690,7 @@ with st.sidebar:
     if (clicked or forced or ("res" not in st.session_state and job is None)) and not (job and not job["done"]):
         pred = shared_predictor(HIST_PATH.stat().st_mtime, model_mtime())
         pred.settings["demon_lower_tier"] = low_dem
+        pred.settings["price_tier3"] = t3_on
         st.session_state.job = job = start_pricing(pred)
     if job is not None and job["done"]:
         st.session_state.job = None
@@ -1297,6 +1310,9 @@ with tab_slate:
             "edge", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
     t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
+    if "t3" in view:
+        t3v = view.loc[t.index]
+        t.loc[t3v.t3.astype(bool), "player"] += np.where(t3v.t3_validated[t3v.t3.astype(bool)].astype(bool), " · T3", " · T3 exp.")
 
     def color(row):
         r = view.loc[row.name]
@@ -1353,7 +1369,8 @@ with tab_slate:
 
 # ---------------- player
 with tab_player:
-    opts = view.apply(lambda r: f"{r.player} · {r.stat} {r.maps_label} {r.line} ({r.source})", axis=1)
+    opts = view.apply(lambda r: f"{r.player} · {r.stat} {r.maps_label} {r.line} ({r.source})"
+                      + (" · T3" if bool(r.get("t3", False)) else ""), axis=1)
     if len(opts):
         pick = st.selectbox("Line", opts.index, format_func=lambda i: opts[i])
         r = slate.loc[pick]
@@ -1663,6 +1680,12 @@ with tab_track:
         c[2].metric("Flat ROI", f"{summ['flat_roi']:+.1%}")
         c[3].metric("Avg CLV (lines)", f"{summ['avg_clv']:+.2f}" if summ["avg_clv"] == summ["avg_clv"] else "–")
         c[4].metric("Slip profit", f"${summ['slip_profit']:.2f}")
+        if any(g["group"] == "Tier 3" for g in summ.get("by_group", [])):
+            st.dataframe(pd.DataFrame(summ["by_group"]), hide_index=True, width="content",
+                         column_config={"hit_rate": st.column_config.NumberColumn("Hit rate", format="percent"),
+                                        "flat_roi": st.column_config.NumberColumn("Flat ROI", format="percent"),
+                                        "avg_edge": st.column_config.NumberColumn("Avg edge", format="percent"),
+                                        "avg_clv": st.column_config.NumberColumn("Avg CLV", format="%.2f")})
         p["bucket"] = (p.p_model * 10).astype(int) / 10
         cal = p.groupby("bucket").agg(pred=("p_model", "mean"), obs=("win", "mean"), n=("win", "size")).reset_index()
         fig = go.Figure([go.Scatter(x=cal.pred, y=cal.obs, mode="markers+lines", name="picks"),

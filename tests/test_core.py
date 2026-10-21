@@ -530,3 +530,55 @@ def test_team_map_counts_follow_a_remade_roster():
     assert c[2] == 20
     assert c[3] == 21  # its players' 20 maps on T1 + 1 as T3, not just the team's own 1
     assert c[4] == 1   # new players with no history keep the team's own count
+
+
+def _rule_row(**kw):
+    r = dict(source="underdog", player="x", start_time=None, stat="kills", maps=[1, 2], line=30.5, side="over",
+             model_mean=33.0, edge=0.08, p_side=0.61, breakeven=0.53, n_maps=60, tenure=40, role_shift=0.0,
+             odds_source="pinnacle", kpr_10=0.8, hs_pct_10=0.5, opp_dpr=0.7, p_map_win=0.5, p_ot=0.1, p_map3=0.0,
+             team_maps=30, t3=False, t3_validated=False)
+    r.update(kw)
+    return r
+
+
+def test_tier3_rules_cap_confidence_and_mark_unvalidated_as_experimental():
+    from cs2model.inference.predict import apply_rules
+    st = {"min_maps": 15, "standin_tenure": 3, "role_shift_flag": 0.18, "max_line_gap": 0.35, "line_move_flag": 1.5,
+          "min_edge": 0.03, "min_team_maps": 12, "tier3_min_edge": 0.06, "tier3_max_conf": "B"}
+    s = apply_rules(pd.DataFrame([_rule_row(), _rule_row(t3=True, t3_validated=True, team_maps=0),
+                                  _rule_row(t3=True, t3_validated=True, team_maps=0, edge=0.05),
+                                  _rule_row(t3=True, t3_validated=False, team_maps=0, edge=0.2)]), st)
+    assert list(s.tier) == ["A", "B", "-", "-"]
+    assert s.why[1].startswith("T3 · ") and "capped at B" in s.why[1]
+    assert "No bet" in s.why[2] and "6%" in s.why[2]
+    assert s.why[3].startswith("T3 experimental") and not s.plus_ev[3]
+
+
+def test_t3_picks_are_tracked_separately(tmp_path):
+    from cs2model.tracking import store
+    con = store.connect(tmp_path / "t.db")
+    base = dict(source="prizepicks", team="A", opponent="B", stat="kills", maps="1+2", line=30.5, side="over", p_side=0.6,
+                breakeven=0.5, edge=0.1, ev=0.2, tier="B", model_mean=31.0, start_time="2026-01-01T00:00:00+00:00")
+    store.log_picks(pd.DataFrame([dict(base, player="x"), dict(base, player="y", t3=True), dict(base, player="z", t3=True)]), con)
+    con.execute("UPDATE picks SET outcome = CASE player WHEN 'z' THEN 'loss' ELSE 'win' END")
+    g = {r["group"]: r for r in store.performance(con)[0]["by_group"]}
+    assert g["Tier 1/2"]["picks"] == 1 and g["Tier 3"]["picks"] == 2 and g["Tier 3"]["flat_roi"] == pytest.approx(0.0)
+    con.close()
+    assert store.connect(tmp_path / "t.db").execute("SELECT count(*) FROM picks WHERE t3=1").fetchone()[0] == 2  # reopen keeps column
+
+
+def test_tier3_calibrator_only_validates_when_it_beats_the_current_one():
+    from cs2model.training import tier3
+    from cs2model.training.calibration import Platt
+    rng = np.random.default_rng(0)
+    n = 4000
+    p_raw = rng.uniform(0.2, 0.8, n)
+    y = (rng.random(n) < 0.5 + 0.4 * (p_raw - 0.5)).astype(int)  # raw probabilities are overconfident
+    groups = np.arange(n) // 2
+    good = Platt().fit(p_raw[:2000], y[:2000])
+    ident = Platt().fit(p_raw, (rng.random(n) < p_raw).astype(int))  # stand-in "current" calibrator ~ identity
+    share = tier3._boot_share(ident.predict(p_raw[2000:]), good.predict(p_raw[2000:]), y[2000:], groups[2000:])
+    assert share > 0.9
+    assert tier3.ece(good.predict(p_raw[2000:]), y[2000:]) < tier3.ece(ident.predict(p_raw[2000:]), y[2000:])
+    gap, k = tier3.strong_gap(ident.predict(p_raw[2000:]), y[2000:])
+    assert gap > 0.03 and k > 0
