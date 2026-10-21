@@ -249,7 +249,7 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 .lg span {display:inline-flex;align-items:center;gap:5px;} .lg i {display:inline-block;width:10px;height:10px;border-radius:2px;}
 .lg i.dash {width:18px;height:0;border-top:2px dashed #cbd5e1;border-radius:0;} .lg .mut {color:var(--mut);margin-left:auto;}
 .wi {font-size:.8rem;color:var(--tx2);border:1px dashed rgba(245,165,36,.6);border-radius:8px;padding:6px 10px;} .wi b {color:#fbbf24;}
-.ml {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin:4px 0 14px;}
+.ml {background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin:10px 0 14px;}
 .ml-h {display:flex;justify-content:space-between;align-items:flex-start;gap:8px;} .ml-h b {font-size:.95rem;} .ml-h .mut {color:var(--mut);font-size:.75rem;}
 .ml-bo {font-size:.7rem;color:var(--tx2);border:1px solid var(--line2);border-radius:999px;padding:2px 9px;white-space:nowrap;}
 .ml-b {display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;}
@@ -1145,8 +1145,8 @@ def player_detail(r, i, scope):
     r = line_stepper(r, i, scope)
     h = pred.hist[pred.hist.player_id == r.player_id].sort_values(["date", "map_number"], ascending=False)
     h = h.assign(hs_pct=h.headshots / h.kills.replace(0, np.nan), kpr=h.kills / h.rounds)
-    st.markdown(match_card(r), unsafe_allow_html=True)
     series_chart(r, h, scope)
+    st.markdown(match_card(r), unsafe_allow_html=True)
     d = details.get(i, {})
     st.markdown(f'<div class="sect">Map predictions · vs {html.escape(r.opponent)}</div>', unsafe_allow_html=True)
     if "spec" in d:
