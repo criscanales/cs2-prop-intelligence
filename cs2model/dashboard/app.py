@@ -20,6 +20,7 @@ from cs2model.parlay import engine as E
 from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, line_sig, prematch_odds_ok, run_slate, stake_cap
 from cs2model.features.build import AWP_MIN_MAPS, AWP_PATH, attach_awp, awp_role
 from cs2model.inference.predict import Predictor, line_probs
+from cs2model.odds import decimal_to_american
 from cs2model.scraper.bo3_history import DATA as HDATA
 from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
 from cs2model.scraper.portraits import DEFAULT as PIC_DEFAULT
@@ -914,12 +915,23 @@ def match_card(r):
         src = ODDS_SRC.get(r.odds_source, str(r.odds_source))
         pa = round(100 * p)
         lab = "Series moneyline" if kind == "direct" else "Estimated series probability · derived from map odds"
-        odds = (f'<div class="ml-p"><div><b style="color:{ca}">{pa}%</b><span>{american(p) if kind == "direct" else "estimate"}</span></div>'
-                f'<div><b style="color:{cb}">{100 - pa}%</b><span>{american(1 - p) if kind == "direct" else "estimate"}</span></div></div>'
+        bd, bo = r.get("book_dec", np.nan), r.get("book_dec_opp", np.nan)
+        book = kind == "direct" and bd == bd and bo == bo and bd > 1 and bo > 1
+
+        def side(q, d):
+            if kind != "direct":
+                return "<span>estimate</span>"
+            return (f"<span>Fair odds (no-vig) {american(q)}</span>"
+                    + (f"<span>Book odds {decimal_to_american(d):+d}</span>" if book else ""))
+        odds = (f'<div class="ml-p"><div><b style="color:{ca}">{pa}%</b>{side(p, bd)}</div>'
+                f'<div><b style="color:{cb}">{100 - pa}%</b>{side(1 - p, bo)}</div></div>'
                 f'<div class="ml-bar"><i style="width:{p:.1%};background:{ca}"></i><i style="flex:1;background:{cb}"></i>'
                 '<u style="left:30%"></u><u style="left:70%"></u></div>'
                 f'<div class="ml-f">{"Implied win % (no-vig)" if kind == "direct" else "Estimate from no-vig map prices, not a quoted series price"} · {html.escape(src)} · pre-match snapshot '
-                f'{pd.Timestamp(at).tz_convert("UTC"):%b %d %H:%M} UTC · ticks at 30% / 70%</div>')
+                f'{pd.Timestamp(at).tz_convert("UTC"):%b %d %H:%M} UTC'
+                + (f' · book odds = {html.escape(src)} quoted price incl. vig, same snapshot' if book else
+                   ' · fair odds only, no quoted book price captured' if kind == "direct" else '')
+                + ' · ticks at 30% / 70%</div>')
     else:
         odds = '<div class="ml-na">Pre-match odds unavailable</div>'
     return (f'<div class="ml"><div class="ml-h"><div><b>{html.escape(ev)}</b><br><span class="mut">{html.escape(f"{day} {clock}".strip()) or "Upcoming"}</span></div>'

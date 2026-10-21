@@ -156,7 +156,10 @@ Pinnacle / Thunderpick / Polymarket snapshot taken before the listed start; othe
 (model Elo is never shown there). It never feeds projections, edges, confidence or picks.
 - **Series moneyline:** the book quoted a series price. Two-way prices are de-vigged multiplicatively
   (each 1/decimal price divided by their sum); Polymarket uses the bid/ask mid and is skipped when the spread is wide.
-  The American odds shown are the no-vig fair odds of that probability, not the book's posted price.
+  Under each % the card shows **Fair odds (no-vig)**, the American odds of that probability, which is not a bettable
+  price. When the book's own pre-match series price was captured (Pinnacle, Thunderpick) it is shown separately as
+  **Book odds**, the quoted price including vig, from the same snapshot (source and time in the footer). Polymarket
+  is an exchange read at the mid price, so it has no Book odds. Fair odds are never shown as Book odds.
 - **Estimated series probability · derived from map odds:** the book quoted only map winners. Each map price is
   de-vigged the same way, then `series_win` combines them assuming maps are independent:
   BO3 = p1·p2 + (p1·(1−p2) + (1−p1)·p2)·p3; BO1 = p1; BO5 uses map 1's price for every map (binomial).

@@ -31,6 +31,7 @@ class MatchOdds:
     rounds_ladder: dict = field(default_factory=dict)  # map number -> [(line, p_over)]
     p_overtime: dict = field(default_factory=dict)  # map number -> prob
     p_map3: Optional[float] = None
+    series_dec: Optional[tuple] = None  # quoted decimal series prices (team1, team2), with vig; sportsbooks only
 
 
 @dataclass

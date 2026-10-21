@@ -733,3 +733,13 @@ def test_series_source_separates_quoted_series_from_map_derived():
     assert series_source(MatchOdds("pinnacle", "A", "B", None, 3, p_series_team1=0.6, p_map_team1={1: 0.55})) == "direct"
     assert series_source(MatchOdds("polymarket", "A", "B", None, 3, p_map_team1={1: 0.6, 2: 0.6})) == "maps"
     assert series_win({1: 0.6, 2: 0.6}, 3) == pytest.approx(0.6 * 0.6 + 2 * 0.6 * 0.4 * 0.6)  # missing map 3 uses map 1
+
+
+def test_book_prices_kept_separate_from_fair_odds_and_aligned_to_team():
+    from cs2model.inference.predict import book_prices
+    from cs2model.types import MatchOdds
+    mo = MatchOdds("pinnacle", "Team Alpha", "Bravo Esports", None, 3, p_series_team1=0.55, series_dec=(1.70, 2.20))
+    assert book_prices(mo, "Team Alpha") == (1.70, 2.20)
+    assert book_prices(mo, "Bravo Esports") == (2.20, 1.70)
+    assert book_prices(MatchOdds("polymarket", "A", "B", None, 3, p_series_team1=0.55), "A") is None
+    assert book_prices(None, "A") is None

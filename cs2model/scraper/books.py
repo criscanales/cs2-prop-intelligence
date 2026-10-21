@@ -93,6 +93,7 @@ def parse_pinnacle(matchups, markets) -> list[MatchOdds]:
                 ph, _ = devig(prices["home"], prices["away"])
                 if per == 0:
                     mo.p_series_team1 = ph
+                    mo.series_dec = (prices["home"], prices["away"])
                 else:
                     mo.p_map_team1[per] = ph
             elif q["type"] == "total" and {"over", "under"} <= prices.keys():
@@ -145,6 +146,7 @@ def fetch_thunderpick_via_bo3(ttl=300, days_ahead=2) -> list[MatchOdds]:
                 c1, c2 = (t1, t2) if t1.get("team_id") == m["team1_id"] else (t2, t1)
                 mo = MatchOdds("thunderpick", n1, n2, _t(m.get("start_date")), int(m.get("bo_type") or 3))
                 mo.p_series_team1 = devig(float(c1["coeff"]), float(c2["coeff"]))[0]
+                mo.series_dec = (float(c1["coeff"]), float(c2["coeff"]))
                 _fill_series(mo)
                 out.append(mo)
     return out

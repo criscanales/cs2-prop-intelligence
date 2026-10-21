@@ -83,6 +83,14 @@ def series_source(odds):
     return "maps" if odds.p_map_team1 else None
 
 
+def book_prices(odds, name_a):
+    """The book's quoted decimal series prices as (team a, team b), or None (no quote, or Polymarket mid prices)."""
+    if odds is None or not odds.series_dec:
+        return None
+    d1, d2 = odds.series_dec
+    return (d2, d1) if team_similarity(odds.team1, name_a) < team_similarity(odds.team2, name_a) else (d1, d2)
+
+
 def line_probs(pmf, line, calibrate=lambda p: p, be_over=0.5, be_under=0.5):
     """Calibrated over/under probabilities and per-side edge for any line, priced like the slate (push voids the leg)."""
     k = np.arange(len(pmf))
@@ -486,6 +494,7 @@ class Predictor:
                     "p_ot": p_ot, "p_map3": p_m3, "odds_source": odds.source if odds else "elo",
                     "best_of": int(c["best_of"]), "p_series_win": p_series if tid == a else 1 - p_series,
                     "series_src": series_source(odds),
+                    **dict(zip(("book_dec", "book_dec_opp"), (bk if tid == a else bk[::-1]) if (bk := book_prices(odds, self.tnames.get(a))) else (np.nan, np.nan))),
                 }
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1
