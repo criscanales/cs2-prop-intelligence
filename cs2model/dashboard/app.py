@@ -21,6 +21,7 @@ from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, lin
 from cs2model.features.build import AWP_MIN_MAPS, AWP_PATH, attach_awp, awp_role
 from cs2model.inference.predict import Predictor, line_probs
 from cs2model.odds import decimal_to_american
+from cs2model.dashboard import history_filters as HF
 from cs2model.scraper.bo3_history import DATA as HDATA
 from cs2model.scraper.bo3_history import HIST_PATH, player_photos, team_logos
 from cs2model.scraper.portraits import DEFAULT as PIC_DEFAULT
@@ -994,18 +995,24 @@ def series_chart(r, h, scope):
                 f'<span class="f">{int(hit.sum())}/{n}</span></div>'
                 f'<div class="ss-r"><span class="k">Avg</span><span class="v">{avg:.1f}</span>'
                 f'<span class="f {"pos" if (diff > 0) == over_side and diff != 0 else "neg"}">{diff:+.1f} vs line</span></div></div>')
+    st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
+                f'<div class="ss-top"><b>Historical series vs the line:</b> hit rates and averages come from past series only and are not a prediction (the Model card is the forecast for this match). Side: <span class="ph-side {"over" if over_side else "under"}">'
+                f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}{" (hypothetical)" if r.get("what_if") else ""}</span> · counted on series where all of {r.maps_label} was played</div>', unsafe_allow_html=True)
+    total, nf = len(piv), 0
+    if total:
+        piv, nf = history_filters(r, h, maps, piv, scope)
     h2h = piv[piv.opp == r.opponent] if len(piv) else piv
     model_cell = (f'<div class="ss ss-m"><div class="ss-h"><b>MODEL</b><span>{"forecast · hypothetical line" if r.get("what_if") else "forecast · this match"}</span></div>'
                   f'<div class="ss-r"><span class="k">P({r.side})</span><span class="v">{r.p_side:.1%}</span><span class="f">{"hyp. edge" if r.get("what_if") else "edge"} {r.edge:+.1%}</span></div>'
                   f'<div class="ss-r"><span class="k">Mean</span><span class="v">{r.model_mean:.1f}</span>'
                   f'<span class="f">{r.model_mean - r.line:+.1f} vs line</span></div></div>')
-    st.markdown(f'<div class="sect">Recent series · {r.stat} {r.maps_label}</div>'
-                f'<div class="ss-top"><b>Historical series vs the line:</b> hit rates and averages come from past series only and are not a prediction (the Model card is the forecast for this match). Side: <span class="ph-side {"over" if over_side else "under"}">'
-                f'{"▲ OVER" if over_side else "▼ UNDER"} {r.line:g}{" (hypothetical)" if r.get("what_if") else ""}</span> · counted on series where all of {r.maps_label} was played</div>'
-                f'<div class="ssr">{cell("L5", piv.tail(5))}{cell("L10", piv.tail(10))}{cell("L15", piv.tail(15))}'
-                f'{cell("H2H", h2h, "No series vs " + html.escape(r.opponent) + " in the last 6 months")}{model_cell}</div>', unsafe_allow_html=True)
+    nomatch = "No series match the current filters"
+    st.markdown(f'<div class="ssr">{cell("L5", piv.tail(5), *([nomatch] if nf else []))}{cell("L10", piv.tail(10), *([nomatch] if nf else []))}'
+                f'{cell("L15", piv.tail(15), *([nomatch] if nf else []))}'
+                f'{cell("H2H", h2h, nomatch if nf else "No series vs " + html.escape(r.opponent) + " in the last 6 months")}{model_cell}</div>', unsafe_allow_html=True)
     if piv.empty:
-        st.info(f"No recent series with {r.maps_label} played; nothing to chart.")
+        st.info(f"No series match the current filters (0 of {total}). Use Reset filters to see them all." if nf
+                else f"No recent series with {r.maps_label} played; nothing to chart.")
         return
     win = st.segmented_control("Window", ["L5", "L10", "L15", "H2H", "All"], default="L10", key=f"win_{scope}_{r.name}",
                                label_visibility="collapsed") or "L10"
@@ -1068,6 +1075,51 @@ def series_chart(r, h, scope):
                 + ('<span><b style="color:#93c5fd">✓</b> blowout map</span>' if show_bl else "") +
                 f'<span class="mut">{len(v)} series shown · hover a bar for details</span></div>', unsafe_allow_html=True)
     cl.plotly_chart(fig, width="stretch", config={"displayModeBar": False}, key=f"series_{scope}_{r.name}")
+
+
+@st.cache_data(show_spinner=False)
+def event_names(ids):
+    from cs2model.scraper.bo3_history import tournament
+    return {t: (tournament(t) or {}).get("name") or f"Event {t}" for t in ids}
+
+
+def history_filters(r, h, maps, piv, scope):
+    """Filters for the historical chart and the L5/L10/L15/H2H cells only; nothing here reaches the model."""
+    sm = HF.series_table(h, maps).reindex(piv.index)
+    pre = f"hf_{scope}_{r.name}_"
+
+    def reset():
+        for k in [k for k in st.session_state if str(k).startswith(pre)]:
+            del st.session_state[k]
+    ev = sm.assign(d=piv.date).dropna(subset=["event"]).groupby("event").d.max().sort_values(ascending=False)
+    names = event_names(tuple(int(e) for e in ev.index))
+    lo, hi = int(sm.rounds.min()), int(sm.rounds.max())
+    c = st.columns([1.1, 1.1, 4], vertical_alignment="center")
+    with c[0].popover("Filters", icon=":material/tune:", width="stretch"):
+        a, b = st.columns(2)
+        f = {"opp": a.multiselect("Opponent", sorted(sm.opp.dropna().unique()), key=pre + "opp", placeholder="All"),
+             "team": b.multiselect("Team", sorted(sm.team.dropna().unique()), key=pre + "team", placeholder="All",
+                                   help="Includes the player's previous teams.")}
+        f["event"] = st.multiselect("Event", [int(e) for e in ev.index], format_func=lambda t: names.get(t, f"Event {t}"),
+                                    key=pre + "event", placeholder="All")
+        a, b, d = st.columns(3)
+        f["result"] = a.selectbox("Series result", ["Any", "Won", "Lost"], key=pre + "result")
+        f["lan"] = b.selectbox("LAN / online", ["Any", "LAN", "Online"], key=pre + "lan")
+        f["bo"] = d.multiselect("Series length", sorted(int(x) for x in sm.bo.dropna().unique()), format_func=lambda x: f"BO{x}",
+                                key=pre + "bo", placeholder="Any")
+        f["tier"] = st.multiselect("Tier", sorted(sm.tier.dropna().unique(), key="sabcd".find), format_func=lambda t: f"Tier {t.upper()}",
+                                   key=pre + "tier", placeholder="Any")
+        f["rounds"] = (st.slider(f"Total rounds ({r.maps_label})", lo, hi, (lo, hi), key=pre + "rounds",
+                                 help="Rounds summed over the counted maps. A filter only: the blowout marker stays an 8+ round margin.")
+                       if hi > lo else None)
+        f["maps"] = st.multiselect("Includes maps", sorted({m for t in sm.map_names for m in t}), format_func=nice_map,
+                                   key=pre + "maps", placeholder="Select maps", help="Keeps series where any counted map is one of these.")
+    n = HF.n_active(f, (lo, hi))
+    c[1].button("Reset filters", on_click=reset, disabled=not n, key=pre + "reset", width="stretch")
+    out = piv.loc[HF.apply(sm, f)]
+    c[2].markdown(f'<span class="mut">{f"{n} filter" + ("s" if n > 1 else "") + " active" if n else "No filters"} · '
+                  f'{len(out)} of {len(piv)} series · history only, never changes the model</span>', unsafe_allow_html=True)
+    return out, n
 
 
 def line_stepper(r, i, scope):

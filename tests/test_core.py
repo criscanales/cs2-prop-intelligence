@@ -743,3 +743,25 @@ def test_book_prices_kept_separate_from_fair_odds_and_aligned_to_team():
     assert book_prices(mo, "Bravo Esports") == (2.20, 1.70)
     assert book_prices(MatchOdds("polymarket", "A", "B", None, 3, p_series_team1=0.55), "A") is None
     assert book_prices(None, "A") is None
+
+
+def test_history_filters_combine_and_handle_empty():
+    from cs2model.dashboard import history_filters as HF
+    rows = []
+    for mid, opp, team, ev, bo, tier, lan, rds, mp, wins in [
+            (1, "Fnatic", "Nexus", 10, 3, "b", "online", (24, 20), ("de_ancient", "de_mirage"), (1, 1, 0)),
+            (2, "G2", "Nexus", 11, 3, "a", "lan", (30, 16), ("de_inferno", "de_nuke"), (1, 1)),
+            (3, "Fnatic", "Old Team", 11, 1, "a", "lan", (22,), ("de_nuke",), (0,))]:
+        for k, w in enumerate(wins):
+            rows.append(dict(match_id=mid, map_number=k + 1, opponent=opp, team=team, tournament_id=ev, bo_type=bo, tier=tier,
+                             event_type=lan, rounds=rds[k] if k < len(rds) else 21, map_name=mp[k] if k < len(mp) else "de_dust2", won=w))
+    sm = HF.series_table(pd.DataFrame(rows), [1, 2])
+    assert sm.loc[1, "rounds"] == 44 and sm.loc[1, "res"] == "Won" and sm.loc[3, "res"] == "Lost"
+    assert list(HF.apply(sm, {})) == [1, 2, 3]
+    assert list(HF.apply(sm, {"opp": ["Fnatic"], "lan": "LAN"})) == [3]
+    assert list(HF.apply(sm, {"team": ["Old Team", "Nexus"], "bo": [3], "tier": ["a"]})) == [2]
+    assert list(HF.apply(sm, {"maps": ["de_nuke"], "result": "Won"})) == [2]
+    assert list(HF.apply(sm, {"rounds": (40, 50), "event": [10]})) == [1]
+    assert list(HF.apply(sm, {"opp": ["G2"], "result": "Lost"})) == []
+    assert HF.n_active({"opp": [], "result": "Any", "lan": "Any", "rounds": (22, 46)}, (22, 46)) == 0
+    assert HF.n_active({"opp": ["G2"], "result": "Won", "rounds": (30, 46)}, (22, 46)) == 3
