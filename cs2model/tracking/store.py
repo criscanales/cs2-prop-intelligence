@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS match_results (
   match_key TEXT, start_time TEXT, bo3_match_id INTEGER, best_of INTEGER, maps_played INTEGER, map3_played INTEGER,
   a_won_map1 INTEGER, a_won_map2 INTEGER, a_won_map3 INTEGER, a_won_series INTEGER, graded_ts TEXT,
   PRIMARY KEY(match_key, start_time));
+CREATE TABLE IF NOT EXISTS data_gaps (
+  id INTEGER PRIMARY KEY, recorded_ts TEXT, gap_start TEXT, gap_end TEXT, scope TEXT, reason TEXT,
+  UNIQUE(gap_start, gap_end, scope));
+CREATE TRIGGER IF NOT EXISTS data_gaps_no_update BEFORE UPDATE ON data_gaps
+  BEGIN SELECT RAISE(ABORT, 'data_gaps is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS data_gaps_no_delete BEFORE DELETE ON data_gaps
+  BEGIN SELECT RAISE(ABORT, 'data_gaps is append-only'); END;
 """
 
 MAP_ODDS_FIELDS = ["pred_ts", "source", "match_key", "team_a_id", "team_b_id", "team_a", "team_b", "start_time", "best_of",
@@ -62,6 +69,20 @@ def connect(path=DB_PATH):
         con.execute("ALTER TABLE preds ADD COLUMN void INTEGER DEFAULT 0")  # a requested map was never played
         con.commit()
     return con
+
+
+
+def record_gap(gap_start, gap_end, scope, reason, con=None):
+    """Permanently mark a period with no tracking records (append-only; re-recording is a no-op)."""
+    con = con or connect()
+    con.execute("INSERT OR IGNORE INTO data_gaps(recorded_ts, gap_start, gap_end, scope, reason) VALUES (?,?,?,?,?)",
+                (_now(), gap_start, gap_end, scope, reason))
+    con.commit()
+
+
+def data_gaps(con=None):
+    con = con or connect()
+    return pd.read_sql("SELECT * FROM data_gaps ORDER BY gap_start", con)
 
 
 def _now():

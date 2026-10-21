@@ -1,6 +1,8 @@
-"""python -m cs2model.cli {crawl,train,slate,grade,regrade,map3-report,refresh}"""
+"""python -m cs2model.cli {crawl,train,slate,grade,regrade,map3-report,refresh,backup,backup-daemon,restore,backup-status,record-gap}"""
 import argparse
+import json
 import logging
+import os
 import time
 
 import pandas as pd
@@ -25,6 +27,24 @@ def main(argv=None):
     r = sub.add_parser("refresh", help="crawl recent days, grade, retrain (optional), re-price; loop")
     r.add_argument("--every", type=int, default=0, help="minutes between runs (0 = once)")
     r.add_argument("--retrain", action="store_true")
+    dest = dict(default=os.environ.get("KPR_BACKUP_DEST"), help="gh:owner/private-repo or dir:/path (default $KPR_BACKUP_DEST)")
+    b = sub.add_parser("backup", help="snapshot tracking.db, verify, upload if changed, prune old versions")
+    b.add_argument("--dest", **dest)
+    b.add_argument("--reason", choices=["daily", "event", "manual"], default="manual")
+    bd = sub.add_parser("backup-daemon", help="daily backups + backups after grading/collection runs")
+    bd.add_argument("--dest", **dest)
+    bd.add_argument("--poll-min", type=int, default=15)
+    rs = sub.add_parser("restore", help="download, verify and restore tracking.db from a backup")
+    rs.add_argument("--dest", **dest)
+    rs.add_argument("--name", default=None, help="backup file name (default newest)")
+    rs.add_argument("--target", default=None)
+    rs.add_argument("--force", action="store_true", help="replace a non-empty tracking.db (old copy is kept)")
+    sub.add_parser("backup-status", help="last backup attempt / success / error")
+    g = sub.add_parser("record-gap", help="permanently record a period with no tracking data")
+    g.add_argument("--start", required=True)
+    g.add_argument("--end", required=True)
+    g.add_argument("--scope", required=True)
+    g.add_argument("--reason", required=True)
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     st = load_yaml("settings.yaml")
@@ -52,6 +72,27 @@ def main(argv=None):
         from .tracking import store
         rep = store.map3_report()
         print(rep.to_string(index=False) if len(rep) else "no finished BO3s with logged map odds yet")
+    elif a.cmd in ("backup", "backup-daemon", "restore"):
+        from .tracking import backup as BK
+        if not a.dest:
+            raise SystemExit("no backup destination: pass --dest or set KPR_BACKUP_DEST")
+        if a.cmd == "backup":
+            try:
+                name = BK.backup(a.dest, a.reason)
+            except Exception as e:
+                raise SystemExit(f"BACKUP FAILED: {e}")
+            print(f"uploaded {name}" if name else "unchanged since last backup; nothing uploaded")
+        elif a.cmd == "backup-daemon":
+            BK.daemon(a.dest, a.poll_min)
+        else:
+            print(json.dumps(BK.restore_latest(a.dest, a.target, a.force, a.name), indent=2))
+    elif a.cmd == "backup-status":
+        from .tracking import backup as BK
+        print(json.dumps(BK.status(), indent=2) or "no backups yet")
+    elif a.cmd == "record-gap":
+        from .tracking import store
+        store.record_gap(a.start, a.end, a.scope, a.reason)
+        print(store.data_gaps().to_string(index=False))
     elif a.cmd == "refresh":
         while True:
             from .scraper.bo3_history import crawl
