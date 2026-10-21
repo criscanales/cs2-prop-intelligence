@@ -518,3 +518,15 @@ def test_pending_picks_status(tmp_path):
                                   dict(base, player="y", start_time=str(now - pd.Timedelta(hours=5)))]), con=con)
     p = store.pending(con)
     assert dict(zip(p.player, p.status)) == {"x": "upcoming", "y": "awaiting results"}
+
+
+def test_team_map_counts_follow_a_remade_roster():
+    from cs2model.inference.predict import team_map_counts
+    h = _hist(20)
+    new = h[(h.game_id == 19) & (h.team_id == 1)].assign(game_id=99, match_id=99, team_id=3, team="T3",
+                                                         date=h.date.max() + pd.Timedelta(hours=1))
+    fresh = new.assign(game_id=98, match_id=98, team_id=4, team="T4", player_id=new.player_id + 100)
+    c = team_map_counts(pd.concat([h, new, fresh]), ("s", "a", "b"), 92)
+    assert c[2] == 20
+    assert c[3] == 21  # its players' 20 maps on T1 + 1 as T3, not just the team's own 1
+    assert c[4] == 1   # new players with no history keep the team's own count

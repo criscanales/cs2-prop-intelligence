@@ -75,6 +75,20 @@ def line_probs(pmf, line, calibrate=lambda p: p, be_over=0.5, be_under=0.5):
     return {"p_over": p_over, "p_under": p_under, "p_push": p_push, "edge_over": c_over - be_over, "edge_under": c_under - be_under}
 
 
+def team_map_counts(h: pd.DataFrame, tiers, days: float) -> pd.Series:
+    """Tier-1/2 maps per team_id in the window: the team's own maps, or the median of its latest roster's maps
+    on any team when that is higher (remade/renamed rosters keep their players' history)."""
+    top = h[h.tier.isin(tiers)]
+    top = top[top.date >= top.date.max() - pd.Timedelta(days=days)]
+    team = top.drop_duplicates(["game_id", "team_id"]).team_id.value_counts()
+    per_player = top.drop_duplicates(["game_id", "player_id"]).player_id.value_counts()
+    last = h.sort_values("date").drop_duplicates("team_id", keep="last")[["team_id", "game_id"]]
+    roster = h.merge(last, on=["team_id", "game_id"])[["team_id", "player_id"]].drop_duplicates()
+    roster["n"] = roster.player_id.map(per_player).fillna(0)
+    counts = pd.concat([team, roster.groupby("team_id").n.median()], axis=1).fillna(0).max(axis=1)
+    return counts[counts > 0].astype(int)
+
+
 class Predictor:
     def __init__(self, hist: pd.DataFrame | None = None, models: Models | None = None, settings=None, payouts=None):
         self.hist = hist if hist is not None else pd.read_csv(HIST_PATH)
@@ -94,9 +108,7 @@ class Predictor:
         self.team_games = tt
         mm = self.m.art.get("map_model")
         self.map_model = MapModel(self.hist, mm) if mm else None
-        top = tt[tt.tier.isin(self.settings["tiers"])]
-        top = top[top.date >= top.date.max() - pd.Timedelta(days=float(self.settings.get("team_maps_days", 92)))]
-        self.team_counts = top.team_id.value_counts()
+        self.team_counts = team_map_counts(h, self.settings["tiers"], float(self.settings.get("team_maps_days", 92)))
         self._feat_hist = None
         self._rcache, self._feat_cache, self._price_cache, self._sim_cache = {}, {}, {}, {}
         self.hist_version = f"{len(self.hist)}:{self.hist.date.max()}:{int(self.hist.game_id.sum())}"
