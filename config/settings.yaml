@@ -29,3 +29,4 @@ demon_min_team_maps: 4      # ...as long as each team has at least this many tie
 price_tier3: false          # also price lines for teams short on tier-1/2 maps as tier 3 (sidebar toggle)
 tier3_min_edge: 0.06        # tier-3 lines need this edge (tier-3 calibrator applied first)
 tier3_max_conf: B           # best confidence a tier-3 pick can get
+collect_tier3: true         # with price_tier3 off, still price tier-3 lines in the background (hidden) and log them for the reliability check

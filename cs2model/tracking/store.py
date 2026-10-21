@@ -36,6 +36,10 @@ def connect(path=DB_PATH):
     if "t3" not in {r[1] for r in con.execute("PRAGMA table_info(picks)")}:
         con.execute("ALTER TABLE picks ADD COLUMN t3 INTEGER DEFAULT 0")  # tier-3 picks, tracked separately
         con.commit()
+    if "t3" not in {r[1] for r in con.execute("PRAGMA table_info(preds)")}:
+        con.execute("ALTER TABLE preds ADD COLUMN t3 INTEGER DEFAULT 0")  # tier-3 lines, for the tier-3 reliability check
+        con.execute("ALTER TABLE preds ADD COLUMN p_over_raw REAL")
+        con.commit()
     return con
 
 
@@ -68,9 +72,12 @@ def log_preds(slate, con=None):
         st = pd.Timestamp(r.start_time)
         st = st.tz_localize("UTC") if st.tzinfo is None else st
         if st > now:
+            t3, raw = getattr(r, "t3", False), getattr(r, "p_over_raw", None)
             rows.append((r.source, r.player, r.team, r.opponent, r.stat, _maps(r.maps), st.isoformat(), _now(),
-                         float(r.line), float(r.model_mean), float(r.p_over)))
-    con.executemany("INSERT OR REPLACE INTO preds VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)", rows)
+                         float(r.line), float(r.model_mean), float(r.p_over), int(t3 is True or t3 == 1),
+                         None if raw is None or raw != raw else float(raw)))
+    con.executemany("INSERT OR REPLACE INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, "
+                    "p_over, t3, p_over_raw) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     con.commit()
 
 
@@ -109,7 +116,7 @@ def grade_preds(hist, resolve_player, con=None):
 def bias_report(con=None):
     """Model vs results on every graded line (not just picks): positive model - actual = model runs high."""
     con = con or connect()
-    p = pd.read_sql("SELECT * FROM preds WHERE actual IS NOT NULL", con)
+    p = pd.read_sql("SELECT * FROM preds WHERE actual IS NOT NULL AND COALESCE(t3, 0) = 0", con)
     if p.empty:
         return p
     p["scope"] = p.maps.map(lambda m: "Map " + m if "+" not in m else "Maps " + m)
@@ -118,6 +125,30 @@ def bias_report(con=None):
         "lines": len(x), "model_minus_actual": (x.model_mean - x.actual).mean(), "line_minus_actual": (x.line - x.actual).mean(),
         "model_minus_line": (x.model_mean - x.line).mean(), "avg_p_over": x.p_over.mean(), "over_rate": (x.actual > x.line).mean()}))
     return out.reset_index()
+
+
+T3_BINS = (0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 1.0001)
+
+
+def t3_reliability(con=None):
+    """Graded tier-3 lines: predicted P of the side the model favours vs how often that side hit, by probability band
+    and market (pushes dropped). Gap > 0 = the model was overconfident in that band."""
+    con = con or connect()
+    p = pd.read_sql("SELECT stat, maps, line, p_over, actual FROM preds WHERE t3 = 1 AND actual IS NOT NULL", con)
+    p = p[p.actual != p.line]
+    if p.empty:
+        return pd.DataFrame(columns=["market", "p_range", "lines", "avg_p", "hit_rate", "gap"])
+    over = p.p_over >= 0.5
+    p = p.assign(p_side=p.p_over.where(over, 1 - p.p_over), hit=((p.actual > p.line) == over).astype(float),
+                 market=p.stat.str.title() + " · " + p.maps.map(lambda m: "Maps " + m if "+" in m else "Map " + m))
+    p = pd.concat([p, p.assign(market="All tier-3 lines")])
+    labels = [f"{a * 100:.0f}–{b:.0%}" if b < 1 else f"{a:.0%}+" for a, b in zip(T3_BINS, T3_BINS[1:])]
+    p["p_range"] = pd.cut(p.p_side, list(T3_BINS), labels=labels, right=False)
+    band = p[(p.p_side >= 0.6) & (p.p_side < 0.75)].assign(p_range="60–75% (combined)")
+    out = pd.concat([p, band]).groupby(["market", "p_range"], observed=True).agg(
+        lines=("hit", "size"), avg_p=("p_side", "mean"), hit_rate=("hit", "mean")).reset_index()
+    out["gap"] = out.avg_p - out.hit_rate
+    return out
 
 
 def first_line(con, source, player, stat, maps, start_time):

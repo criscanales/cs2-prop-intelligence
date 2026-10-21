@@ -10,6 +10,7 @@ from cs2model.inference.simulate import MatchSpec, PlayerSpec, leg_totals, simul
 from cs2model.names import norm_player, team_similarity
 from cs2model.parlay import engine as E
 from cs2model.scraper import http, lines
+from cs2model.tracking import store
 
 
 def test_american_decimal_roundtrip():
@@ -582,3 +583,52 @@ def test_tier3_calibrator_only_validates_when_it_beats_the_current_one():
     assert tier3.ece(good.predict(p_raw[2000:]), y[2000:]) < tier3.ece(ident.predict(p_raw[2000:]), y[2000:])
     gap, k = tier3.strong_gap(ident.predict(p_raw[2000:]), y[2000:])
     assert gap > 0.03 and k > 0
+
+
+def _t3_slate(rows):
+    st = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=3)
+    return pd.DataFrame([dict(source="underdog", player=f"p{i}", team="a", opponent="b", stat=stat, maps=maps,
+                              start_time=st, odds_type="standard", line=line, model_mean=line, p_over=p, t3=t3, p_over_raw=p)
+                         for i, (stat, maps, line, p, t3) in enumerate(rows)])
+
+
+def test_t3_preds_logged_with_flag_and_old_preds_table_migrates(tmp_path):
+    import sqlite3
+    db = tmp_path / "t.db"
+    old = sqlite3.connect(db)
+    old.execute("CREATE TABLE preds (source TEXT, player TEXT, team TEXT, opponent TEXT, stat TEXT, maps TEXT, start_time TEXT, "
+                "ts TEXT, line REAL, model_mean REAL, p_over REAL, actual REAL, PRIMARY KEY(source, player, stat, maps, start_time))")
+    old.commit()
+    old.close()
+    con = store.connect(db)
+    store.log_preds(_t3_slate([("kills", (1, 2), 30.5, 0.66, True), ("kills", (1, 2), 30.5, 0.55, False)]), con)
+    got = dict(con.execute("SELECT player, t3 FROM preds").fetchall())
+    assert got == {"p0": 1, "p1": 0}
+
+
+def test_t3_reliability_buckets_by_favoured_side_and_market(tmp_path):
+    con = store.connect(tmp_path / "t.db")
+    rows = [("kills", (1, 2), 30.5, 0.62, True)] * 4 + [("kills", (1, 2), 30.5, 0.30, True)] * 2 \
+        + [("headshots", (1,), 8.5, 0.52, True), ("kills", (1, 2), 30.5, 0.70, False), ("kills", (1,), 15.5, 0.62, True)]
+    store.log_preds(_t3_slate(rows), con)
+    acts = [31, 31, 31, 20, 20, 40, 9, 40, 15.5]  # last one is a push (dropped)
+    for i, a in enumerate(acts):
+        con.execute("UPDATE preds SET actual=? WHERE player=?", (a, f"p{i}"))
+    con.commit()
+    rel = store.t3_reliability(con).set_index(["market", "p_range"])
+    k = rel.loc[("Kills · Maps 1+2", "60–65%")]          # 4 overs at 62%: 3 hit
+    assert k.lines == 4 and abs(k.avg_p - 0.62) < 1e-9 and abs(k.hit_rate - 0.75) < 1e-9 and abs(k.gap + 0.13) < 1e-9
+    u = rel.loc[("Kills · Maps 1+2", "70–75%")]          # unders at P(over)=30%: 1 of 2 hit
+    assert u.lines == 2 and abs(u.avg_p - 0.70) < 1e-9 and u.hit_rate == 0.5
+    assert rel.loc[("Kills · Maps 1+2", "60–75% (combined)")].lines == 6
+    assert rel.loc[("Headshots · Map 1", "50–55%")].hit_rate == 1.0
+    assert rel.loc[("All tier-3 lines", "60–75% (combined)")].lines == 6  # tier-1/2 row and the push are excluded
+    assert store.t3_reliability(store.connect(tmp_path / "empty.db")).empty
+
+
+def test_bias_report_excludes_tier3_preds(tmp_path):
+    con = store.connect(tmp_path / "t.db")
+    store.log_preds(_t3_slate([("kills", (1,), 15.5, 0.6, True), ("kills", (1,), 15.5, 0.6, False)]), con)
+    con.execute("UPDATE preds SET actual=20")
+    con.commit()
+    assert store.bias_report(con).lines.sum() == 1

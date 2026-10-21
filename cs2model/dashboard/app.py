@@ -263,6 +263,7 @@ span[data-baseweb="tag"] {background:var(--panel2)!important;border:1px solid va
 @media (max-width:1180px) {.ph {grid-template-columns:1fr;} .ph-bet {border-left:0;padding-left:0;min-width:0;} .ssr {grid-template-columns:repeat(2,1fr);}}
 .ph-q {margin-top:10px;font-size:.75rem;color:var(--tx2);border-left:2px solid var(--line2);padding-left:8px;max-width:520px;}
 .ph-q.ok {color:#86efac;border-left-color:rgba(34,197,94,.6);}
+.ph-q.t3x {color:var(--tx);border-left-color:var(--steel);background:var(--steel-soft);padding:6px 8px;}
 .pp-tw {overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);}
 .pp-tbl {width:100%;border-collapse:collapse;font-size:.85rem;min-width:860px;}
 .pp-tbl.sm {min-width:620px;font-size:.82rem;}
@@ -624,8 +625,17 @@ def start_meta(r):
     return f'<br>Starts {day} {clock}' + (f' · <span class="{"live" if rel == "started" else ""}">{rel}</span>' if rel else "")
 
 
+T3X_HELP = ("Model probability minus breakeven on a tier-3 line. The tier-3 calibration for this market is not validated, "
+            "so a positive difference does not qualify the pick (no confidence rating, never +EV).")
+
+
+def t3_experimental(r):
+    return bool(getattr(r, "t3", False)) and not bool(getattr(r, "t3_validated", False))
+
+
 def play_card(r, help_edge="", help_tier=""):
     over = r.side == "over"
+    t3x = t3_experimental(r)
     plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
     ot = getattr(r, "odds_type", "standard")
     if isinstance(ot, str) and ot != "standard":
@@ -640,7 +650,7 @@ def play_card(r, help_edge="", help_tier=""):
     chg = getattr(r, "chg", "")
     new = f'<span class="badge b-new">{html.escape(chg)}</span>' if isinstance(chg, str) and chg else ""
     be = float(min(1.0, max(0.0, r.breakeven)))
-    fill = "var(--pos)" if r.p_side > be else "var(--steel)"
+    fill = "var(--pos)" if r.p_side > be and not t3x else "var(--steel)"
     day, clock, rel = start_info(getattr(r, "start_time", None))
     short = clock if rel and rel != "started" else f"{day} {clock}"
     rel_s = f" · <b>{rel.removeprefix('in ')}</b>" if rel else ""
@@ -651,7 +661,8 @@ def play_card(r, help_edge="", help_tier=""):
 <div class="mt">{logo(r.team_id)}{html.escape(r.team)} <span style="color:var(--mut)">vs</span> {logo(r.opp_id)}{html.escape(r.opponent)} · {r.maps_label}</div></div>
 <span class="side {'o' if over else 'u'}">{'▲ OVER' if over else '▼ UNDER'}</span></div>
 <div class="bet">{ICON.get(r.stat, "")}<span class="ln">{r.line:g}</span><span class="st">{r.stat}</span>
-<span class="edge{'' if r.edge > 0 else ' neg'}" title="{help_edge}">{r.edge:+.1%}</span></div>
+{f'<span class="edge neg" title="{T3X_HELP}">Unvalidated model difference {r.edge:+.1%}</span>' if t3x else
+   f'<span class="edge{"" if r.edge > 0 else " neg"}" title="{help_edge}">{r.edge:+.1%}</span>'}</div>
 <div class="prob" title="Model probability of this side vs the platform breakeven probability (white tick); both on a 0–100% scale">
 <div class="row"><span>Model P <b>{r.p_side:.1%}</b></span><span>Breakeven <b>{be:.1%}</b></span></div>
 <div class="track"><div class="fill" style="width:{r.p_side:.1%};background:{fill}"></div><div class="be" style="left:{be:.1%}"></div></div></div>
@@ -854,7 +865,10 @@ def awp_meta(r):
 def profile_header(r):
     over = r.side == "over"
     why = html.escape(str(getattr(r, "why", "") or ""), quote=True)
-    qual = (f'<div class="ph-q ok">✓ Qualified +EV pick · confidence {r.tier}</div>' if r.tier != "-" else
+    t3x = t3_experimental(r)
+    qual = ('<div class="ph-q t3x">T3 experimental · not a pick. A positive model difference does not qualify this line: the '
+            'tier-3 calibration for this market is not validated, so it gets no confidence rating and is never +EV.</div>' if t3x else
+            f'<div class="ph-q ok">✓ Qualified +EV pick · confidence {r.tier}</div>' if r.tier != "-" else
             f'<div class="ph-q" title="{why}">Model edge only — not a qualified pick{" · " + why if why else ""}</div>')
     conf = (f"Conf {r.tier}" if r.tier != "-" else
             '<span class="nr" title="Confidence tiers (A/B/C) are only given to lines that pass every +EV rule '
@@ -869,8 +883,9 @@ def profile_header(r):
             f'<span class="scope">{r.maps_label}</span></div><div class="ph-nums">'
             f'<div><div class="ph-k">Model P({r.side})</div><div class="v">{r.p_side:.1%}</div></div>'
             f'<div><div class="ph-k">Breakeven</div><div class="v">{r.breakeven:.1%}</div></div>'
-            f'<div><div class="ph-k">Edge</div><div class="v {"pos" if r.edge > 0 and r.tier != "-" else ""}">{r.edge:+.1%}</div></div>'
-            f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div>{qual}</div></div>')
+            + (f'<div title="{T3X_HELP}"><div class="ph-k">Unvalidated model difference</div><div class="v">{r.edge:+.1%}</div></div>' if t3x else
+             f'<div><div class="ph-k">Edge</div><div class="v {"pos" if r.edge > 0 and r.tier != "-" else ""}">{r.edge:+.1%}</div></div>')
+            + f'<div><div class="ph-k">Model mean</div><div class="v">{r.model_mean:.1f}</div></div></div>{qual}</div></div>')
 
 
 OVERC = ("#22c55e", "#15803d", "#14532d")
@@ -1392,7 +1407,10 @@ with tab_player:
             m[0].metric("P(over)", f"{r.p_over:.1%}")
             m[1].metric("P(under)", f"{r.p_under:.1%}")
             m = st.columns(2)
-            m[0].metric("Edge", f"{r.edge:+.1%}", r.side, help=HELP["edge"])
+            if t3_experimental(r):
+                m[0].metric("Unvalidated model difference", f"{r.edge:+.1%}", help=T3X_HELP)
+            else:
+                m[0].metric("Edge", f"{r.edge:+.1%}", r.side, help=HELP["edge"])
             m[1].metric("Confidence tier", r.tier, help=HELP["tier"])
             st.caption(r.reason)
             if r["flags"]:
@@ -1695,6 +1713,18 @@ with tab_track:
         st.dataframe(p.sort_values("start_time", ascending=False), hide_index=True, width="stretch")
         if len(s):
             st.dataframe(s, hide_index=True, width="stretch")
+    st.subheader("Tier-3 reliability (graded tier-3 lines)")
+    rel = store.t3_reliability()
+    if rel.empty:
+        st.caption("No graded tier-3 lines yet. Tier-3 lines are priced and logged in the background (even with the T3 toggle off) "
+                   "and graded when results come in.")
+    else:
+        st.caption("Every graded tier-3 line, not just picks: predicted probability of the side the model favours vs how often it hit. "
+                   "Gap > 0 = overconfident. 60–75% is where tier-3 picks would sit. Pushes are left out.")
+        st.dataframe(rel, hide_index=True, width="stretch",
+                     column_config={"avg_p": st.column_config.NumberColumn("Avg predicted P", format="percent"),
+                                    "hit_rate": st.column_config.NumberColumn("Hit rate", format="percent"),
+                                    "gap": st.column_config.NumberColumn("Gap (pred - hit)", format="percent")})
 
 # ---------------- model
 with tab_model:

@@ -364,7 +364,9 @@ class Predictor:
         if not self._payouts_fixed:
             self.payouts = load_yaml("payouts.yaml")
         t0 = time.perf_counter()
-        groups, t3_lines = {}, set()
+        groups, t3_lines, t3_hidden, hidden_rows = {}, set(), {}, {}
+        price3, collect3 = bool(self.settings.get("price_tier3", False)), bool(self.settings.get("collect_tier3", True))
+        self.t3_collected = pd.DataFrame()
         unmatched, seen_keys = [], set()
         now = pd.Timestamp(now) if now is not None else pd.Timestamp.now(tz="UTC")
         for ln in lines:
@@ -397,13 +399,16 @@ class Predictor:
                 thr = min(thr, int(self.settings.get("demon_min_team_maps", 4)))
             low = [n for n, t in ((ln.team, t1), (ln.opponent, t2)) if self.team_counts.get(t, 0) < thr]
             if low:
-                # opt-in: teams short on tier-1/2 maps are priced as tier 3 if they have enough tier-1-3 maps
-                ok3 = self.settings.get("price_tier3", False) and all(
-                    self.team_counts_t3.get(t, 0) >= self.settings["min_team_maps"] for t in (t1, t2))
-                if not ok3:
-                    unmatched.append(skip_record(ln, f"not enough tier-1/2 maps: {', '.join(low)}"))
+                # teams short on tier-1/2 maps are priced as tier 3 if they have enough tier-1-3 maps: shown only with the
+                # opt-in setting, otherwise priced in the background (kept off the slate) so tier-3 outcomes are still logged
+                skip = skip_record(ln, f"not enough tier-1/2 maps: {', '.join(low)}")
+                if not ((price3 or collect3) and all(
+                        self.team_counts_t3.get(t, 0) >= self.settings["min_team_maps"] for t in (t1, t2))):
+                    unmatched.append(skip)
                     continue
                 t3_lines.add(id(ln))
+                if not price3:
+                    t3_hidden[id(ln)] = skip
             key = tuple(sorted((t1, t2)))
             groups.setdefault(key, []).append((ln, pid, t1))
 
@@ -474,6 +479,8 @@ class Predictor:
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1
                 rows.append(row)
+                if id(ln) in t3_hidden:
+                    hidden_rows[row["id"]] = t3_hidden.pop(id(ln))
                 details[row["id"]] = {"pmf": pmf, "spec": out["spec"], "pkey": str(pid)}
         slate = pd.DataFrame(rows)
         T["rows"] += time.perf_counter() - t0
@@ -483,6 +490,11 @@ class Predictor:
             slate.loc[alt, "why"] = slate.loc[alt, "why"] + slate.loc[alt].apply(
                 lambda r: f" · {r.odds_type}: " + ("priced at your set payout" if alt_line_mode(r, self.payouts) != "standard"
                                                    else "priced at the standard payout; the real payout is higher, so EV is a lower bound"), axis=1)
+            if hidden_rows:
+                hid = slate["id"].isin(list(hidden_rows))
+                self.t3_collected, slate = slate[hid], slate[~hid]
+                for i in hidden_rows:
+                    details.pop(i, None)
             # Monte Carlo only where slips can be built: matches with at least one +EV leg.
             n0 = int(self.settings.get("n_sims_initial", 20000))
             n_full = max(n0, int(n_sims))
@@ -501,6 +513,7 @@ class Predictor:
                 if push.any():  # voided leg ~ resolved at the conditional rate
                     hit = hit | (push & (rrng.random(len(tot)) < r.p_side))
                 details[rid].update(totals=tot, hit=_thin(hit, r.p_side, rrng))
+        unmatched += list(hidden_rows.values()) + list(t3_hidden.values())  # background tier-3 lines still count as skipped
         return slate, details, pd.DataFrame(unmatched, columns=SKIP_COLS)
 
 

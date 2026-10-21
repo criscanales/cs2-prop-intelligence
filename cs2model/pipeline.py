@@ -54,7 +54,7 @@ def run_slate(predictor=None, line_sources=("underdog", "prizepicks"), book_sour
     slate, details, unmatched = predictor.build_slate(lines, books, n_sims=n_sims, con=con)
     slate = add_match_meta(slate, odds_at)
     if log:
-        store.log_preds(slate, con)
+        store.log_preds(pd.concat([slate, getattr(predictor, "t3_collected", pd.DataFrame())]), con)
     return {"slate": slate, "details": details, "unmatched": unmatched, "errors": e1 + e2,
             "recon": reconcile(len(lines), slate, unmatched),
             "n_lines": len(lines), "sig": line_sig(lines), "n_books": len(books), "predictor": predictor,
