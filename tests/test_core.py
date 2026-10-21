@@ -724,3 +724,12 @@ def test_match_card_odds_only_from_prematch_book_snapshots():
     assert not prematch_odds_ok("thunderpick", st + pd.Timedelta(minutes=5), st)  # in-play snapshot
     assert not prematch_odds_ok("elo", st - pd.Timedelta(hours=1), st)  # model Elo is not market odds
     assert not prematch_odds_ok("pinnacle", None, st) and not prematch_odds_ok("pinnacle", st, None)
+
+
+def test_series_source_separates_quoted_series_from_map_derived():
+    from cs2model.inference.predict import series_source, series_win
+    from cs2model.types import MatchOdds
+    assert series_source(None) is None
+    assert series_source(MatchOdds("pinnacle", "A", "B", None, 3, p_series_team1=0.6, p_map_team1={1: 0.55})) == "direct"
+    assert series_source(MatchOdds("polymarket", "A", "B", None, 3, p_map_team1={1: 0.6, 2: 0.6})) == "maps"
+    assert series_win({1: 0.6, 2: 0.6}, 3) == pytest.approx(0.6 * 0.6 + 2 * 0.6 * 0.4 * 0.6)  # missing map 3 uses map 1

@@ -151,6 +151,18 @@ in a row Pinnacle is paused for 5 minutes, doubling up to 30. A 401/403 is repor
 The last good Pinnacle pull is kept in `data/pinnacle_last_good.json` and shown as stale with its original time.
 It is never used for pricing: matches fall back to the next live source, or to the labeled model Elo.
 
+**Match card series probability (Player panel, information only).** The card shows a series win % only from a
+Pinnacle / Thunderpick / Polymarket snapshot taken before the listed start; otherwise it says "Pre-match odds unavailable"
+(model Elo is never shown there). It never feeds projections, edges, confidence or picks.
+- **Series moneyline:** the book quoted a series price. Two-way prices are de-vigged multiplicatively
+  (each 1/decimal price divided by their sum); Polymarket uses the bid/ask mid and is skipped when the spread is wide.
+  The American odds shown are the no-vig fair odds of that probability, not the book's posted price.
+- **Estimated series probability · derived from map odds:** the book quoted only map winners. Each map price is
+  de-vigged the same way, then `series_win` combines them assuming maps are independent:
+  BO3 = p1·p2 + (p1·(1−p2) + (1−p1)·p2)·p3; BO1 = p1; BO5 uses map 1's price for every map (binomial).
+  A map with no price uses map 1's price. This ignores map-pick/veto order and momentum between maps, so it is an
+  estimate, shown without American odds, and never presented as a quoted series price.
+
 **Not used:**
 - **HLTV.** Plain HTTP gets a Cloudflare 403 challenge. Getting past it would mean bypassing access controls, so HLTV is skipped.
 - **thunderpick.io directly.** It also answers 403 to non-browser clients. Its odds come through bo3.gg instead.

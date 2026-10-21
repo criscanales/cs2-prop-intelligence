@@ -907,16 +907,18 @@ def match_card(r):
     tier = f"Tier {tier.upper()}" if isinstance(tier, str) and tier else "Tier unknown"
     et = {"lan": "LAN", "online": "Online"}.get(et, "LAN/online unknown")
     p = r.get("p_series_win", np.nan)
-    ok = p == p and prematch_odds_ok(r.odds_source, at, getattr(r, "start_time", None))
+    kind = r.get("series_src")
+    ok = p == p and kind in ("direct", "maps") and prematch_odds_ok(r.odds_source, at, getattr(r, "start_time", None))
     if ok:
         ca, cb = ("#22c55e", "#f5a524") if p >= 0.5 else ("#f5a524", "#22c55e")
         src = ODDS_SRC.get(r.odds_source, str(r.odds_source))
         pa = round(100 * p)
-        odds = (f'<div class="ml-p"><div><b style="color:{ca}">{pa}%</b><span>{american(p)}</span></div>'
-                f'<div><b style="color:{cb}">{100 - pa}%</b><span>{american(1 - p)}</span></div></div>'
+        lab = "Series moneyline" if kind == "direct" else "Estimated series probability · derived from map odds"
+        odds = (f'<div class="ml-p"><div><b style="color:{ca}">{pa}%</b><span>{american(p) if kind == "direct" else "estimate"}</span></div>'
+                f'<div><b style="color:{cb}">{100 - pa}%</b><span>{american(1 - p) if kind == "direct" else "estimate"}</span></div></div>'
                 f'<div class="ml-bar"><i style="width:{p:.1%};background:{ca}"></i><i style="flex:1;background:{cb}"></i>'
                 '<u style="left:30%"></u><u style="left:70%"></u></div>'
-                f'<div class="ml-f">Implied win % (no-vig) · {html.escape(src)} · pre-match snapshot '
+                f'<div class="ml-f">{"Implied win % (no-vig)" if kind == "direct" else "Estimate from no-vig map prices, not a quoted series price"} · {html.escape(src)} · pre-match snapshot '
                 f'{pd.Timestamp(at).tz_convert("UTC"):%b %d %H:%M} UTC · ticks at 30% / 70%</div>')
     else:
         odds = '<div class="ml-na">Pre-match odds unavailable</div>'
@@ -925,7 +927,7 @@ def match_card(r):
             f'<span class="ml-bo">{et}</span></div></div>'
             f'<div class="ml-t"><div>{logo(r.team_id)}<b>{html.escape(r.team)}</b></div><span class="vs">VS</span>'
             f'<div>{logo(r.opp_id)}<b>{html.escape(r.opponent)}</b></div></div>'
-            f'<div class="ml-o"><div class="ml-k">Moneyline</div>{odds}</div>'
+            f'<div class="ml-o"><div class="ml-k">{lab if ok else "Moneyline"}</div>{odds}</div>'
             '<div class="ml-f" style="margin-top:6px">Information only: does not change projections, edges, confidence or picks.</div></div>')
 
 

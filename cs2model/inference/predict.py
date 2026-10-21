@@ -73,6 +73,16 @@ def series_win(p_map, best_of):
     return float(sum(comb(n, k) * q ** k * (1 - q) ** (n - k) for k in range(w, n + 1)))
 
 
+def series_source(odds):
+    """"direct" = the book quoted a series moneyline, "maps" = series probability estimated from its map odds
+    (`series_win`), None = no book odds (model Elo)."""
+    if odds is None:
+        return None
+    if odds.p_series_team1 is not None:
+        return "direct"
+    return "maps" if odds.p_map_team1 else None
+
+
 def line_probs(pmf, line, calibrate=lambda p: p, be_over=0.5, be_under=0.5):
     """Calibrated over/under probabilities and per-side edge for any line, priced like the slate (push voids the leg)."""
     k = np.arange(len(pmf))
@@ -475,6 +485,7 @@ class Predictor:
                     "p_map_win": float(np.mean([p_map[j] if tid == a else 1 - p_map[j] for j in p_map])),
                     "p_ot": p_ot, "p_map3": p_m3, "odds_source": odds.source if odds else "elo",
                     "best_of": int(c["best_of"]), "p_series_win": p_series if tid == a else 1 - p_series,
+                    "series_src": series_source(odds),
                 }
                 row["edge"] = row["p_side"] - row["breakeven"]
                 row["ev"] = row["p_side"] / row["breakeven"] - 1
