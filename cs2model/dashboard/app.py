@@ -925,6 +925,23 @@ def match_card(r):
             f'<div class="ml-f">Implied win % · fair odds from {html.escape(src)} · {at} · avg map win {r.p_map_win:.0%}</div></div></div>')
 
 
+def round_score(won, a, b):
+    if a != a or b != b:
+        return "–"
+    return f"{'W' if a > b else 'L' if a < b else 'D'} {int(a)}–{int(b)}"
+
+
+def series_score(w, n):
+    if w != w or n != n:
+        return "–"
+    w, n = int(w), int(n)
+    return f"{'W' if w > n - w else 'L' if w < n - w else 'D'} {w}–{n - w}"
+
+
+def wl_color(txt):
+    return "#4ade80" if txt.startswith("W") else "#f87171" if txt.startswith("L") else "#a3acb9"
+
+
 def series_chart(r, h, scope):
     maps = [m for m in r.maps if m <= 3] or list(r.maps)
     over_side = r.side == "over"
@@ -935,6 +952,16 @@ def series_chart(r, h, scope):
     if len(piv):
         piv = piv.join(g.groupby("match_id").agg(date=("date", "max"), opp=("opponent", "first"), ot=("_ot", "max"), bl=("_bl", "max"))).sort_values("date")
         piv["total"] = piv[maps].sum(1)
+        mp = g.groupby(["match_id", "map_number"]).agg(won=("won", "max"), tr=("team_rounds", "max"), orr=("opp_rounds", "max"),
+                                                      mn=("map_name", "first"))
+        for m in maps:
+            x_ = mp.xs(m, level="map_number").reindex(piv.index)
+            piv[f"wn{m}"] = x_.won.values
+            piv[f"sc{m}"] = [round_score(w, a, b) for w, a, b in zip(x_.won, x_.tr, x_.orr)]
+            piv[f"mn{m}"] = [nice_map(n) if isinstance(n, str) else "?" for n in x_.mn]
+        ser = h[h.match_id.isin(piv.index)].groupby(["match_id", "map_number"]).won.max().groupby("match_id").agg(["sum", "size"])
+        ser = ser.reindex(piv.index)
+        piv["series"] = [series_score(w, n) for w, n in zip(ser["sum"], ser["size"])]
 
     def cell(lbl, d, empty="No series in the last 6 months"):
         n = len(d)
@@ -976,17 +1003,22 @@ def series_chart(r, h, scope):
     tags = [", ".join([x for x, f in (("high-round map (OT)", o), ("blowout map", b_)) if f]) or "–" for o, b_ in zip(v.ot.astype(bool), v.bl.astype(bool))]
     hit = (v.total >= r.line).values
     x = list(range(len(v)))
-    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}" for d, o in zip(v.date, v.opp)]
+    labels = [f"{pd.Timestamp(d):%b %d}<br>{html.escape(str(o))[:13]}<br><span style='color:{wl_color(sr)}'><b>{sr}</b></span>"
+              for d, o, sr in zip(v.date, v.opp, v.series)]
     res = np.where(v.total > r.line, "OVER", np.where(v.total < r.line, "UNDER", "PUSH (= line)"))
-    cd = np.column_stack([[f"{pd.Timestamp(d):%b %d}" for d in v.date], v.opp.astype(str)] + [v[m].astype(int) for m in maps]
-                         + [v.total.astype(int), res, tags])
-    ht = ("<b>%{customdata[0]} · vs %{customdata[1]}</b><br>" + "".join(f"Map {m}: %{{customdata[{2 + k}]}}<br>" for k, m in enumerate(maps))
+    maprows = [[f"Map {m} · {n} · <span style='color:{wl_color(sc)}'><b>{sc}</b></span> · {int(val)} {r.stat}"
+                for n, sc, val in zip(v[f"mn{m}"], v[f"sc{m}"], v[m])] for m in maps]
+    cd = np.column_stack([[f"{pd.Timestamp(d):%b %d}" for d in v.date], v.opp.astype(str)] + maprows
+                         + [v.total.astype(int), res, tags, v.series])
+    ht = ("<b>%{customdata[0]} · vs %{customdata[1]}</b> · series <b>" + f"%{{customdata[{5 + len(maps)}]}}</b><br>"
+          + "".join(f"%{{customdata[{2 + k}]}}<br>" for k in range(len(maps)))
           + f"Combined total: <b>%{{customdata[{2 + len(maps)}]}}</b><br>Line: {r.line:g}<br>Result: <b>%{{customdata[{3 + len(maps)}]}}</b><br>Maps: %{{customdata[{4 + len(maps)}]}}<extra></extra>")
     fig = go.Figure()
     for k, m in enumerate(maps):
         fig.add_bar(x=x, y=v[m], name=f"Map {m}", customdata=cd, hovertemplate=ht,
                     marker=dict(color=[(OVERC if h_ else UNDERC)[k] for h_ in hit], line=dict(color="rgba(10,13,18,.85)", width=1)),
-                    text=[f"<b>{int(val)}</b><br><span style='font-size:9px'>M{m}</span>" for val in v[m]], textposition="inside",
+                    text=[f"<b>{int(val)}</b><br><span style='font-size:9px'>M{m}<br>{html.escape(sc)}</span>" for val, sc in zip(v[m], v[f"sc{m}"])],
+                    textposition="inside",
                     insidetextanchor="middle", textangle=0, constraintext="inside",
                     textfont=dict(color="#ffffff", size=13, family="JetBrains Mono"))
     fig.add_scatter(x=x, y=v.total, mode="text", text=[f"<b>{int(t_)}</b>" + (" <span style='color:#fbbf24'>⚠</span>" if o else "") + (" <span style='color:#93c5fd'>✓</span>" if b_ else "")
@@ -1014,6 +1046,7 @@ def series_chart(r, h, scope):
     cl.markdown(f'<div class="lg"><span><i style="background:{OVERC[0]}"></i><i style="background:{OVERC[1]}"></i>Total ≥ line</span>'
                 f'<span><i style="background:{UNDERC[0]}"></i><i style="background:{UNDERC[1]}"></i>Total below line</span>'
                 f'<span>{seg}</span><span><i class="dash"></i>Line {r.line:g}</span>'
+                '<span><b style="color:#4ade80">W</b>/<b style="color:#f87171">L</b> 13–9 = team rounds–opponent rounds</span>'
                 + ('<span><b style="color:#fbbf24">⚠</b> high-round map</span>' if show_ot else "")
                 + ('<span><b style="color:#93c5fd">✓</b> blowout map</span>' if show_bl else "") +
                 f'<span class="mut">{len(v)} series shown · hover a bar for details</span></div>', unsafe_allow_html=True)
