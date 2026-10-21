@@ -632,3 +632,85 @@ def test_bias_report_excludes_tier3_preds(tmp_path):
     con.execute("UPDATE preds SET actual=20")
     con.commit()
     assert store.bias_report(con).lines.sum() == 1
+
+
+def _series_hist(results, start, played=None, drop_player_maps=()):
+    """One Bo3 between T1 (players 10-14) and T2; results = T1 won map 1, 2, ... ; `played` limits maps in history."""
+    rows = []
+    for m, w in enumerate(results, start=1):
+        if played is not None and m > played:
+            break
+        for tid, opp, won in ((1, 2, w), (2, 1, 1 - w)):
+            for k in range(5):
+                pid = tid * 10 + k
+                if (pid, m) in drop_player_maps:
+                    continue
+                rows.append(dict(date=start + pd.Timedelta(minutes=50 * (m - 1)), match_id=7, game_id=70 + m, map_number=m,
+                                 bo_type=3, team_id=tid, team=f"T{tid}", opp_id=opp, opponent=f"T{opp}", player_id=pid,
+                                 player=f"p{pid}", won=won, kills=10 + m, headshots=5))
+    return pd.DataFrame(rows)
+
+
+def _settle_db(tmp_path, maps_list):
+    con = store.connect(tmp_path / "t.db")
+    st = pd.Timestamp.now(tz="UTC").floor("h") - pd.Timedelta(hours=6)
+    for maps in maps_list:
+        for src in ("prizepicks", "underdog"):
+            con.execute("INSERT INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, p_over) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (src, "p10", "T1", "T2", "kills", maps, st.isoformat(), "x", 13.5, 14.0, 0.55))
+            con.execute("INSERT INTO picks (source, player, team, opponent, stat, maps, line, side, p_model, breakeven, tier, start_time) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (src, "p10", "T1", "T2", "kills", maps, 13.5, "under", 0.6, 0.55, "B", st.isoformat()))
+    con.commit()
+    return con, st
+
+
+def _res(name, team=None):
+    return 10 if name == "p10" else None
+
+
+def _picks(con):
+    return {(r[0], r[1]): (r[2], r[3]) for r in con.execute("SELECT source, maps, outcome, actual FROM picks")}
+
+
+def test_map3_void_after_2_0_and_maps_1_2_unaffected(tmp_path):
+    con, st = _settle_db(tmp_path, ["3", "1+2"])
+    store.grade(_series_hist([1, 1], st), _res, con)
+    for src in ("prizepicks", "underdog"):
+        assert _picks(con)[(src, "3")] == ("void", None)
+        assert _picks(con)[(src, "1+2")] == ("loss", 23.0)  # Maps 1+2 = 11 + 12 kills
+    pr = dict(con.execute("SELECT maps || source, COALESCE(actual, -1) || '/' || void FROM preds").fetchall())
+    assert pr["3underdog"] == "-1/1" and pr["1+2underdog"] == "23.0/0"
+    perf = store.performance(con)[0]
+    assert perf["voids"] == 2 and perf["picks"] == 2  # voids are out of the win/loss denominator
+    assert store.bias_report(con).lines.sum() == 2
+
+
+def test_map3_graded_after_2_1(tmp_path):
+    con, st = _settle_db(tmp_path, ["3"])
+    store.grade(_series_hist([1, 0, 1], st), _res, con)
+    assert _picks(con)[("underdog", "3")] == ("win", 13.0)
+
+
+def test_map3_played_but_missing_stays_unresolved(tmp_path):
+    con, st = _settle_db(tmp_path, ["3"])
+    store.grade(_series_hist([1, 0, 1], st, played=2), _res, con)  # 1-1 after two maps, Map 3 not in history yet
+    assert _picks(con)[("underdog", "3")] == (None, None)
+    store.grade(_series_hist([1, 0, 1], st, drop_player_maps={(10, 3)}), _res, con)  # Map 3 played, player row missing
+    assert _picks(con)[("underdog", "3")] == (None, None)
+    assert con.execute("SELECT count(*) FROM preds WHERE actual IS NOT NULL OR void = 1").fetchone()[0] == 0
+
+
+def test_resettle_fixes_old_zero_grades_and_is_idempotent(tmp_path):
+    con, st = _settle_db(tmp_path, ["3", "1+2"])
+    h = _series_hist([1, 1], st)
+    con.execute("UPDATE preds SET actual = CASE maps WHEN '3' THEN 0 ELSE 23 END")  # old bug: unplayed Map 3 graded as 0
+    con.execute("UPDATE picks SET actual = CASE maps WHEN '3' THEN 0 ELSE 23 END, outcome = CASE maps WHEN '3' THEN 'win' ELSE 'loss' END")
+    con.commit()
+    before = con.execute("SELECT line, p_over, model_mean, ts, start_time FROM preds ORDER BY rowid").fetchall()
+    assert len(store.resettle(h, _res, con, dry_run=True)) == 4
+    assert _picks(con)[("underdog", "3")] == ("win", 0.0)  # dry run writes nothing
+    ch = store.resettle(h, _res, con)
+    assert len(ch) == 4 and set(ch.maps) == {"3"} and set(ch.new_status) == {"void"}
+    assert _picks(con)[("underdog", "3")] == ("void", None) and _picks(con)[("underdog", "1+2")] == ("loss", 23.0)
+    assert con.execute("SELECT line, p_over, model_mean, ts, start_time FROM preds ORDER BY rowid").fetchall() == before
+    assert store.resettle(h, _res, con).empty  # second run changes nothing

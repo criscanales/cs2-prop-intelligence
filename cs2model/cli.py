@@ -19,6 +19,8 @@ def main(argv=None):
     s.add_argument("--sims", type=int, default=None)
     s.add_argument("--log-picks", action="store_true", help="record +EV picks and best slips in tracking.db")
     sub.add_parser("grade", help="grade logged picks/slips against bo3 results")
+    rg = sub.add_parser("regrade", help="re-check settled picks/preds against bo3 results and fix wrong settlements")
+    rg.add_argument("--dry-run", action="store_true")
     r = sub.add_parser("refresh", help="crawl recent days, grade, retrain (optional), re-price; loop")
     r.add_argument("--every", type=int, default=0, help="minutes between runs (0 = once)")
     r.add_argument("--retrain", action="store_true")
@@ -41,6 +43,8 @@ def main(argv=None):
                       f"picks {b['n_picks']:5d}  hit {b['hit_rate']:.3f}  ROI {b['roi']:+.3f}")
     elif a.cmd == "slate":
         slate_cmd(a.platform, a.sims, a.log_picks, st)
+    elif a.cmd == "regrade":
+        regrade_cmd(a.dry_run)
     elif a.cmd == "grade":
         grade_cmd()
     elif a.cmd == "refresh":
@@ -106,6 +110,17 @@ def grade_cmd():
     n = store.grade(pr.hist, pr.resolve_player)
     summ, _, _ = store.performance()
     print(f"graded {n} picks; performance: {summ}")
+
+
+def regrade_cmd(dry_run=False):
+    from .inference.predict import Predictor
+    from .scraper.bo3_history import HIST_PATH
+    from .tracking import store
+    pr = Predictor(pd.read_csv(HIST_PATH))
+    ch = store.resettle(pr.hist, pr.resolve_player, dry_run=dry_run)
+    print(f"{'would change' if dry_run else 'changed'} {len(ch)} settlements")
+    if len(ch):
+        print(ch.groupby(["table", "maps", "old_status", "new_status"]).size().to_string())
 
 
 if __name__ == "__main__":

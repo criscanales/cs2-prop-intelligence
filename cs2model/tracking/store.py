@@ -40,6 +40,9 @@ def connect(path=DB_PATH):
         con.execute("ALTER TABLE preds ADD COLUMN t3 INTEGER DEFAULT 0")  # tier-3 lines, for the tier-3 reliability check
         con.execute("ALTER TABLE preds ADD COLUMN p_over_raw REAL")
         con.commit()
+    if "void" not in {r[1] for r in con.execute("PRAGMA table_info(preds)")}:
+        con.execute("ALTER TABLE preds ADD COLUMN void INTEGER DEFAULT 0")  # a requested map was never played
+        con.commit()
     return con
 
 
@@ -81,7 +84,10 @@ def log_preds(slate, con=None):
     con.commit()
 
 
-def _actual(hist, resolve_player, player, team, opponent, stat, maps, start_time):
+def _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time):
+    """("graded", total) when every requested map has the player's stats, ("void", None) when a requested map
+    was never played because the series was already decided (e.g. Map 3 after a 2-0), None while unresolved
+    (not started, match/player not in history yet, or a played map's data is missing)."""
     from ..names import team_similarity
     st = pd.Timestamp(start_time)
     st = st.tz_localize("UTC") if st.tzinfo is None else st
@@ -94,23 +100,80 @@ def _actual(hist, resolve_player, player, team, opponent, stat, maps, start_time
     h = h[h.opponent.map(lambda o: team_similarity(o, opponent) >= 0.75)]
     if h.empty:
         return None
+    h = h[h.match_id == h.match_id.mode().iloc[0]].drop_duplicates("map_number")
     mapnos = [int(x) for x in str(maps).split("+")]
-    if not set(h.map_number).issuperset(m for m in mapnos if m <= 2):
+    missing = [m for m in mapnos if m not in set(h.map_number)]
+    if not missing:
+        return "graded", float(h[h.map_number.isin(mapnos)][stat].sum())
+    if set(missing) & set(hist.loc[hist.match_id == h.match_id.iloc[0], "map_number"]):
+        return None  # the map was played but this player's row is missing
+    first = min(missing)
+    prior = h[h.map_number < first]
+    if len(prior) != first - 1 or prior.won.isna().any():
         return None
-    return float(h[h.map_number.isin(mapnos)][stat].sum())
+    bo = h["bo_type"].dropna() if "bo_type" in h else pd.Series(dtype=float)
+    need = int(bo.iloc[0]) // 2 + 1 if len(bo) else 2
+    wins = int(prior.won.sum())
+    return ("void", None) if max(wins, len(prior) - wins) >= need else None
+
+
+def _actual(hist, resolve_player, player, team, opponent, stat, maps, start_time):
+    r = _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time)
+    return r[1] if r else None
+
+
+def _outcome(actual, line, side):
+    return "push" if actual == line else ("win" if (actual > line) == (side == "over") else "loss")
 
 
 def grade_preds(hist, resolve_player, con=None):
     con = con or connect()
-    p = pd.read_sql("SELECT rowid AS rid, * FROM preds WHERE actual IS NULL", con)
+    p = pd.read_sql("SELECT rowid AS rid, * FROM preds WHERE actual IS NULL AND COALESCE(void, 0) = 0", con)
     n = 0
     for r in p.itertuples():
-        a = _actual(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
-        if a is not None:
-            con.execute("UPDATE preds SET actual=? WHERE rowid=?", (a, int(r.rid)))
+        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        if res is not None:
+            con.execute("UPDATE preds SET actual=?, void=? WHERE rowid=?", (res[1], int(res[0] == "void"), int(r.rid)))
             n += 1
     con.commit()
     return n
+
+
+def resettle(hist, resolve_player, con=None, dry_run=False):
+    """Re-check already-settled preds and picks against the history and fix any whose settlement differs.
+    Only settlement fields (actual, void, outcome) change; rows that can't be re-verified are left as they are.
+    Idempotent: a second run finds nothing to change. Returns one row per change."""
+    con = con or connect()
+    hist = hist.copy()
+    hist["date"] = pd.to_datetime(hist["date"], utc=True, format="ISO8601")
+    changes = []
+    for r in pd.read_sql("SELECT rowid AS rid, * FROM preds WHERE actual IS NOT NULL OR COALESCE(void, 0) = 1", con).itertuples():
+        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        if res is None:
+            continue
+        old = ("void", None) if r.void == 1 else ("graded", r.actual)
+        if old != res:
+            changes.append(dict(table="preds", source=r.source, player=r.player, stat=r.stat, maps=r.maps, start_time=r.start_time,
+                                line=r.line, t3=r.t3, old_actual=old[1], old_status=old[0], new_actual=res[1], new_status=res[0]))
+            if not dry_run:
+                con.execute("UPDATE preds SET actual=?, void=? WHERE rowid=?", (res[1], int(res[0] == "void"), int(r.rid)))
+    for r in pd.read_sql("SELECT * FROM picks WHERE outcome IS NOT NULL", con).itertuples():
+        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        if res is None:
+            continue
+        new = "void" if res[0] == "void" else _outcome(res[1], r.line, r.side)
+        if (r.outcome, None if r.outcome == "void" else r.actual) != (new, res[1]):
+            changes.append(dict(table="picks", source=r.source, player=r.player, stat=r.stat, maps=r.maps, start_time=r.start_time,
+                                line=r.line, t3=r.t3, side=r.side, old_actual=r.actual, old_status=r.outcome,
+                                new_actual=res[1], new_status=new))
+            if not dry_run:
+                con.execute("UPDATE picks SET actual=?, outcome=? WHERE id=?", (res[1], new, int(r.id)))
+    con.commit()
+    if not dry_run and any(c["table"] == "picks" for c in changes):
+        con.execute("UPDATE slips SET hits=NULL, payout=NULL, profit=NULL WHERE hits IS NOT NULL")
+        con.commit()
+        _grade_slips(con)
+    return pd.DataFrame(changes)
 
 
 def bias_report(con=None):
@@ -177,8 +240,7 @@ def log_slip(platform, play, legs, p_all, ev, stake, hit_dist, con=None):
 
 
 def grade(hist: pd.DataFrame, resolve_player, con=None, payouts=None):
-    """Fill actual results, closing lines and outcomes for picks whose matches are in `hist`."""
-    from ..names import team_similarity
+    """Fill actual results, closing lines and outcomes (win/loss/push/void) for picks whose matches are in `hist`."""
     con = con or connect()
     picks = pd.read_sql("SELECT * FROM picks WHERE outcome IS NULL AND start_time IS NOT NULL", con)
     hist = hist.copy()
@@ -186,27 +248,15 @@ def grade(hist: pd.DataFrame, resolve_player, con=None, payouts=None):
     grade_preds(hist, resolve_player, con)
     n = 0
     for _, p in picks.iterrows():
-        st = pd.Timestamp(p.start_time)
-        st = st.tz_localize("UTC") if st.tzinfo is None else st
-        if st > pd.Timestamp.now(tz="UTC"):
+        res = _settle(hist, resolve_player, p.player, p.team, p.opponent, p.stat, p.maps, p.start_time)
+        if res is None:
             continue
-        pid = resolve_player(p.player, p.team)
-        if pid is None:
-            continue
-        h = hist[(hist.player_id == pid) & (hist.date >= st - pd.Timedelta(hours=3)) & (hist.date <= st + pd.Timedelta(hours=12))]
-        h = h[h.opponent.map(lambda o: team_similarity(o, p.opponent) >= 0.75)]
-        if h.empty:
-            continue
-        mapnos = [int(x) for x in str(p.maps).split("+")]
-        if not set(h.map_number).issuperset(m for m in mapnos if m <= 2):
-            continue
-        actual = float(h[h.map_number.isin(mapnos)][p.stat].sum())
-        outcome = "push" if actual == p.line else ("win" if (actual > p.line) == (p.side == "over") else "loss")
+        outcome = "void" if res[0] == "void" else _outcome(res[1], p.line, p.side)
         close = con.execute("SELECT line FROM line_snapshots WHERE source=? AND player=? AND stat=? AND maps=? "
                             "AND start_time=? ORDER BY ts DESC LIMIT 1",
                             (p.source, p.player, p.stat, p.maps, p.start_time)).fetchone()
         con.execute("UPDATE picks SET actual=?, outcome=?, closing_line=? WHERE id=?",
-                    (actual, outcome, close[0] if close else None, int(p.id)))
+                    (res[1], outcome, close[0] if close else None, int(p.id)))
         n += 1
     con.commit()
     _grade_slips(con, payouts)
@@ -244,13 +294,14 @@ def performance(con=None):
     con = con or connect()
     p = pd.read_sql("SELECT * FROM picks WHERE outcome IN ('win','loss')", con)
     s = pd.read_sql("SELECT * FROM slips WHERE hits IS NOT NULL", con)
+    other = dict(con.execute("SELECT outcome, count(*) FROM picks WHERE outcome IN ('push','void') GROUP BY outcome").fetchall())
     if p.empty:
-        return {"picks": 0}, p, s
+        return {"picks": 0, "pushes": other.get("push", 0), "voids": other.get("void", 0)}, p, s
     p["win"] = (p.outcome == "win").astype(int)
     p["roi"] = p.win / p.breakeven - 1
     sign = p.side.map({"over": 1, "under": -1})
     p["clv"] = (p.closing_line - p.line) * sign  # positive = line moved in our favour
-    summ = {"picks": len(p), "hit_rate": p.win.mean(), "flat_roi": p.roi.mean(), "avg_edge": p.edge.mean(),
+    summ = {"picks": len(p), "pushes": other.get("push", 0), "voids": other.get("void", 0), "hit_rate": p.win.mean(), "flat_roi": p.roi.mean(), "avg_edge": p.edge.mean(),
             "avg_clv": p.clv.mean(), "pct_beat_close": (p.clv > 0).mean(),
             "slips": len(s), "slip_profit": float(s.profit.sum()) if len(s) else 0.0,
             "slip_roi": float(s.profit.sum() / s.stake.sum()) if len(s) and s.stake.sum() else None}
