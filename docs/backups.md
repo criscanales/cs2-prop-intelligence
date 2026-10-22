@@ -39,7 +39,7 @@ GitHub's 1000-asset release limit (the log warns above 900).
 - `.github/workflows/backup-health.yml` in the backups repo (source: `ops/kprlab-backups/backup-health.yml`) runs
   on GitHub every 3 h, independent of the Devin machine. It fails and opens/updates the same alert issue when the
   newest backup is older than 26 h, the heartbeat is older than 2 h (machine down, crashed or asleep) or the last
-  attempt failed. Failed scheduled runs also trigger GitHub's own failure email.
+  attempt failed, and closes it once a later run passes. Failed scheduled runs also trigger GitHub's own failure email.
 - Locally, failures are logged as `BACKUP FAILED` in `data/backup.log` and recorded in `data/backup_status.json`;
   `python -m cs2model.cli backup-status` prints it.
 

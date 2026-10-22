@@ -59,3 +59,10 @@ jobs:
           n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label backup-alert --state open --json number -q '.[0].number')
           if [ -n "$n" ]; then gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body";
           else gh issue create --repo "$GITHUB_REPOSITORY" --title "KPR Lab tracking backup health check failing" --label backup-alert --body "$body"; fi
+      - name: Close alert issue when healthy
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label backup-alert --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "$(date -u +%FT%TZ): health check passing again. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; fi
