@@ -12,6 +12,8 @@ from cs2model.parlay import engine as E
 from cs2model.scraper import http, lines
 from cs2model.tracking import store
 
+UP = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False, "scheduled": None}}  # verified pre-match
+
 
 def test_american_decimal_roundtrip():
     assert odds.american_to_decimal(-110) == pytest.approx(1.9091, 1e-3)
@@ -380,9 +382,11 @@ def test_preds_log_grade_and_bias_report(tmp_path):
     con = store.connect(tmp_path / "t.db")
     st = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=1)
     slate = pd.DataFrame([{"source": "underdog", "player": "x", "team": "A", "opponent": "B", "stat": "kills", "maps": [1, 2],
-                           "start_time": st, "odds_type": "standard", "line": 30.5, "model_mean": 33.0, "p_over": 0.6}])
-    store.log_preds(slate, con)
-    store.log_preds(slate.assign(line=31.5), con)  # re-pricing keeps only the latest pre-start price
+                           "start_time": st, "odds_type": "standard", "line": 30.5, "model_mean": 33.0, "p_over": 0.6,
+                           "team_id": 1, "opp_id": 2}])
+    upcoming = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False, "scheduled": None}}
+    store.log_preds(slate, con, status=upcoming)
+    store.log_preds(slate.assign(line=31.5), con, status=upcoming)  # re-pricing keeps only the latest pre-start price
     assert con.execute("SELECT count(*), max(line) FROM preds").fetchone() == (1, 31.5)
     con.execute("UPDATE preds SET actual=29")
     br = store.bias_report(con)
@@ -514,9 +518,9 @@ def test_pending_picks_status(tmp_path):
     con = store.connect(tmp_path / "t.db")
     now = pd.Timestamp.now(tz="UTC")
     base = dict(source="prizepicks", team="A", opponent="B", stat="kills", maps="1+2", line=30.5, side="over", p_side=0.6,
-                breakeven=0.55, edge=0.05, ev=0.1, tier="B", model_mean=31.0)
+                breakeven=0.55, edge=0.05, ev=0.1, tier="B", model_mean=31.0, team_id=1, opp_id=2)
     store.log_picks(pd.DataFrame([dict(base, player="x", start_time=str(now + pd.Timedelta(hours=2))),
-                                  dict(base, player="y", start_time=str(now - pd.Timedelta(hours=5)))]), con=con)
+                                  dict(base, player="y", start_time=str(now - pd.Timedelta(hours=5)))]), con=con, status=UP)
     p = store.pending(con)
     assert dict(zip(p.player, p.status)) == {"x": "upcoming", "y": "awaiting results"}
 
@@ -559,8 +563,9 @@ def test_t3_picks_are_tracked_separately(tmp_path):
     from cs2model.tracking import store
     con = store.connect(tmp_path / "t.db")
     base = dict(source="prizepicks", team="A", opponent="B", stat="kills", maps="1+2", line=30.5, side="over", p_side=0.6,
-                breakeven=0.5, edge=0.1, ev=0.2, tier="B", model_mean=31.0, start_time="2026-01-01T00:00:00+00:00")
-    store.log_picks(pd.DataFrame([dict(base, player="x"), dict(base, player="y", t3=True), dict(base, player="z", t3=True)]), con)
+                breakeven=0.5, edge=0.1, ev=0.2, tier="B", model_mean=31.0, start_time="2026-01-01T00:00:00+00:00",
+                team_id=1, opp_id=2)
+    store.log_picks(pd.DataFrame([dict(base, player="x"), dict(base, player="y", t3=True), dict(base, player="z", t3=True)]), con, status=UP)
     con.execute("UPDATE picks SET outcome = CASE player WHEN 'z' THEN 'loss' ELSE 'win' END")
     g = {r["group"]: r for r in store.performance(con)[0]["by_group"]}
     assert g["Tier 1/2"]["picks"] == 1 and g["Tier 3"]["picks"] == 2 and g["Tier 3"]["flat_roi"] == pytest.approx(0.0)
@@ -588,7 +593,8 @@ def test_tier3_calibrator_only_validates_when_it_beats_the_current_one():
 def _t3_slate(rows):
     st = pd.Timestamp.now(tz="UTC") + pd.Timedelta(hours=3)
     return pd.DataFrame([dict(source="underdog", player=f"p{i}", team="a", opponent="b", stat=stat, maps=maps,
-                              start_time=st, odds_type="standard", line=line, model_mean=line, p_over=p, t3=t3, p_over_raw=p)
+                              start_time=st, odds_type="standard", line=line, model_mean=line, p_over=p, t3=t3, p_over_raw=p,
+                              team_id=1, opp_id=2)
                          for i, (stat, maps, line, p, t3) in enumerate(rows)])
 
 
@@ -601,7 +607,7 @@ def test_t3_preds_logged_with_flag_and_old_preds_table_migrates(tmp_path):
     old.commit()
     old.close()
     con = store.connect(db)
-    store.log_preds(_t3_slate([("kills", (1, 2), 30.5, 0.66, True), ("kills", (1, 2), 30.5, 0.55, False)]), con)
+    store.log_preds(_t3_slate([("kills", (1, 2), 30.5, 0.66, True), ("kills", (1, 2), 30.5, 0.55, False)]), con, status=UP)
     got = dict(con.execute("SELECT player, t3 FROM preds").fetchall())
     assert got == {"p0": 1, "p1": 0}
 
@@ -610,7 +616,7 @@ def test_t3_reliability_buckets_by_favoured_side_and_market(tmp_path):
     con = store.connect(tmp_path / "t.db")
     rows = [("kills", (1, 2), 30.5, 0.62, True)] * 4 + [("kills", (1, 2), 30.5, 0.30, True)] * 2 \
         + [("headshots", (1,), 8.5, 0.52, True), ("kills", (1, 2), 30.5, 0.70, False), ("kills", (1,), 15.5, 0.62, True)]
-    store.log_preds(_t3_slate(rows), con)
+    store.log_preds(_t3_slate(rows), con, status=UP)
     acts = [31, 31, 31, 20, 20, 40, 9, 40, 15.5]  # last one is a push (dropped)
     for i, a in enumerate(acts):
         con.execute("UPDATE preds SET actual=? WHERE player=?", (a, f"p{i}"))
@@ -628,7 +634,7 @@ def test_t3_reliability_buckets_by_favoured_side_and_market(tmp_path):
 
 def test_bias_report_excludes_tier3_preds(tmp_path):
     con = store.connect(tmp_path / "t.db")
-    store.log_preds(_t3_slate([("kills", (1,), 15.5, 0.6, True), ("kills", (1,), 15.5, 0.6, False)]), con)
+    store.log_preds(_t3_slate([("kills", (1,), 15.5, 0.6, True), ("kills", (1,), 15.5, 0.6, False)]), con, status=UP)
     con.execute("UPDATE preds SET actual=20")
     con.commit()
     assert store.bias_report(con).lines.sum() == 1
@@ -654,12 +660,14 @@ def _series_hist(results, start, played=None, drop_player_maps=()):
 def _settle_db(tmp_path, maps_list):
     con = store.connect(tmp_path / "t.db")
     st = pd.Timestamp.now(tz="UTC").floor("h") - pd.Timedelta(hours=6)
+    pre = (st - pd.Timedelta(hours=1)).isoformat()  # logged an hour before Map 1 began
     for maps in maps_list:
         for src in ("prizepicks", "underdog"):
             con.execute("INSERT INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, p_over) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (src, "p10", "T1", "T2", "kills", maps, st.isoformat(), "x", 13.5, 14.0, 0.55))
-            con.execute("INSERT INTO picks (source, player, team, opponent, stat, maps, line, side, p_model, breakeven, tier, start_time) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (src, "p10", "T1", "T2", "kills", maps, 13.5, "under", 0.6, 0.55, "B", st.isoformat()))
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (src, "p10", "T1", "T2", "kills", maps, st.isoformat(), pre, 13.5, 14.0, 0.55))
+            con.execute("INSERT INTO picks (created, source, player, team, opponent, stat, maps, line, side, p_model, breakeven, tier, "
+                        "start_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (pre, src, "p10", "T1", "T2", "kills", maps, 13.5, "under", 0.6, 0.55, "B", st.isoformat()))
     con.commit()
     return con, st
 
@@ -806,12 +814,12 @@ def test_map_odds_log_is_append_only_deduped_and_pre_match_only(tmp_path):
     con = store.connect(tmp_path / "t.db")
     r, st = _prov()
     snap = pd.Timestamp.now(tz="UTC").floor("s")
-    assert store.log_map_odds([r], snap, con) == 1
-    assert store.log_map_odds([r], snap, con) == 0  # same source, match and snapshot
-    assert store.log_map_odds([r], snap + pd.Timedelta(minutes=5), con) == 0  # unchanged inputs
-    assert store.log_map_odds([dict(r, p_series_a=0.72)], snap + pd.Timedelta(minutes=10), con) == 1  # the price moved
-    assert store.log_map_odds([dict(r, source="pinnacle")], snap, con) == 1  # another source, same match
-    assert store.log_map_odds([dict(r, source="thunderpick")], st, con) == 0  # snapshot not before start
+    assert store.log_map_odds([r], snap, con, status=UP) == 1
+    assert store.log_map_odds([r], snap, con, status=UP) == 0  # same source, match and snapshot
+    assert store.log_map_odds([r], snap + pd.Timedelta(minutes=5), con, status=UP) == 0  # unchanged inputs
+    assert store.log_map_odds([dict(r, p_series_a=0.72)], snap + pd.Timedelta(minutes=10), con, status=UP) == 1  # the price moved
+    assert store.log_map_odds([dict(r, source="pinnacle")], snap, con, status=UP) == 1  # another source, same match
+    assert store.log_map_odds([dict(r, source="thunderpick")], st, con, status=UP) == 0  # snapshot not before start
     assert con.execute("SELECT count(*) FROM map_odds_log").fetchone()[0] == 3
     with pytest.raises(sqlite3.DatabaseError):
         con.execute("UPDATE map_odds_log SET p_series_a = 0.5")

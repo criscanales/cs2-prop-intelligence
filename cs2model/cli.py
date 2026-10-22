@@ -1,4 +1,4 @@
-"""python -m cs2model.cli {crawl,train,slate,grade,regrade,map3-report,refresh,backup,backup-daemon,restore,backup-status,record-gap}"""
+"""python -m cs2model.cli {crawl,train,slate,grade,regrade,audit-tracking,map3-report,refresh,backup,backup-daemon,restore,backup-status,record-gap}"""
 import argparse
 import json
 import logging
@@ -24,6 +24,8 @@ def main(argv=None):
     sub.add_parser("grade", help="grade logged picks/slips against bo3 results")
     rg = sub.add_parser("regrade", help="re-check settled picks/preds against bo3 results and fix wrong settlements")
     rg.add_argument("--dry-run", action="store_true")
+    au = sub.add_parser("audit-tracking", help="exclude post-start and rescheduled-duplicate records from reports (append-only)")
+    au.add_argument("--dry-run", action="store_true")
     sub.add_parser("map3-report", help="predicted vs actual Map 3 rate for finished BO3s, by favourite strength and odds provenance")
     r = sub.add_parser("refresh", help="crawl recent days, grade, retrain (optional), re-price; loop")
     r.add_argument("--every", type=int, default=0, help="minutes between runs (0 = once)")
@@ -72,6 +74,8 @@ def main(argv=None):
         regrade_cmd(a.dry_run)
     elif a.cmd == "grade":
         grade_cmd()
+    elif a.cmd == "audit-tracking":
+        audit_cmd(a.dry_run)
     elif a.cmd == "map3-report":
         from .tracking import store
         rep = store.map3_report()
@@ -177,6 +181,17 @@ def regrade_cmd(dry_run=False):
     print(f"{'would change' if dry_run else 'changed'} {len(ch)} settlements")
     if len(ch):
         print(ch.groupby(["table", "maps", "old_status", "new_status"]).size().to_string())
+
+
+def audit_cmd(dry_run=False):
+    from .inference.predict import Predictor
+    from .scraper.bo3_history import HIST_PATH
+    from .tracking import store
+    pr = Predictor(pd.read_csv(HIST_PATH))
+    ex = store.audit(pr.hist, pr.resolve_player, dry_run=dry_run)
+    print(f"{'would exclude' if dry_run else 'excluded'} {len(ex)} records")
+    if len(ex):
+        print(ex.groupby(["tbl", "reason"]).size().to_string())
 
 
 if __name__ == "__main__":
