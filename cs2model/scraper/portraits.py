@@ -8,7 +8,10 @@ import hashlib
 import io
 import json
 import logging
+import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 
 import numpy as np
 import requests
@@ -37,15 +40,39 @@ def _image(url):
     return np.asarray(Image.open(io.BytesIO(f.read_bytes())).convert("RGBA"))
 
 
+CASCADE = "haarcascade_frontalface_default.xml"
+_CV_LOCK = threading.Lock()
+
+
+def _cascade_file(cv):
+    """Path of the bundled face cascade; cv2.data can be missing (other builds, or a half-imported module)."""
+    base = getattr(getattr(cv, "data", None), "haarcascades", None) or os.path.join(os.path.dirname(cv.__file__ or ""), "data")
+    f = os.path.join(base, CASCADE)
+    return f if os.path.isfile(f) else None
+
+
+@lru_cache(maxsize=1)
+def _detector():
+    """(cv2, cascade path) resolved once under a lock so worker threads never see a partially imported cv2."""
+    with _CV_LOCK:
+        try:
+            import cv2
+        except ImportError:
+            return None, None
+        f = _cascade_file(cv2)
+        if f is None:
+            log.warning("OpenCV face cascade not found; portraits keep the default crop")
+        return cv2, f
+
+
 def _face(a):
-    try:
-        import cv2
-    except ImportError:
+    cv2, cascade = _detector()
+    if cascade is None:
         return None
     H, W = a.shape[:2]
     al = a[..., 3:4] / 255.0
     g = cv2.cvtColor((a[..., :3] * al + 128 * (1 - al)).astype(np.uint8), cv2.COLOR_RGB2GRAY)
-    cc = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    cc = cv2.CascadeClassifier(cascade)
     fs = [f for f in cc.detectMultiScale(g, 1.05, 5, minSize=(int(W * .12), int(W * .12))) if f[1] < H * 0.6 and abs(f[0] + f[2] / 2 - W / 2) < 0.12 * W]
     if not fs:
         return None
@@ -102,6 +129,7 @@ def frames(photos, workers=8):
             log.warning("portrait %s: %s", u, e)
             return u, None
     if todo:
+        _detector()
         with ThreadPoolExecutor(workers) as ex:
             for u, fr in ex.map(one, sorted(todo)):
                 if fr is not None:
