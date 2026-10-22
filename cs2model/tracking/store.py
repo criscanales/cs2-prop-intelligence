@@ -81,9 +81,12 @@ def connect(path=DB_PATH):
         con.execute("ALTER TABLE preds ADD COLUMN void INTEGER DEFAULT 0")  # a requested map was never played
         con.commit()
     for t in ("preds", "picks"):
-        if "match_id" not in {r[1] for r in con.execute(f"PRAGMA table_info({t})")}:
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({t})")}
+        if "match_id" not in cols:
             con.execute(f"ALTER TABLE {t} ADD COLUMN match_id INTEGER")  # bo3.gg match id verified at logging time
-            con.commit()
+        if "prematch" not in cols:
+            con.execute(f"ALTER TABLE {t} ADD COLUMN prematch TEXT")  # scheduled / uncertain / verified (NULL = legacy)
+        con.commit()
     return con
 
 
@@ -100,12 +103,12 @@ def _quarantine(con, tbl, reason, match_id, payload):
                 (_now(), tbl, reason, match_id, json.dumps(payload, default=str)))
 
 
-def _gate(con, tbl, team_id, opp_id, status, payload):
-    """bo3 match id when the record is verifiably pre-match, else quarantine it and return None."""
+def _gate(con, tbl, team_id, opp_id, status, payload, start_time=None, allow_uncertain=True):
+    """(bo3 match id, prematch level) when the record may be logged, else quarantine it and return None."""
     from . import prematch
-    ok, mid, why = prematch.classify(team_id, opp_id, status)
-    if ok:
-        return mid
+    level, mid, why = prematch.classify(team_id, opp_id, status, start_time)
+    if level == "scheduled" or (level == "uncertain" and allow_uncertain):
+        return mid, level
     _quarantine(con, tbl, why, mid, payload)
     return None
 
@@ -166,11 +169,13 @@ def log_preds(slate, con=None, status=_FETCH):
             row = (r.source, r.player, r.team, r.opponent, r.stat, _maps(r.maps), st.isoformat(), _now(),
                    float(r.line), float(r.model_mean), float(r.p_over), int(t3 is True or t3 == 1),
                    None if raw is None or raw != raw else float(raw))
-            mid = _gate(con, "preds", getattr(r, "team_id", None), getattr(r, "opp_id", None), status, row)
-            if mid is not None:
-                rows.append(row + (mid,))
-    con.executemany("INSERT OR REPLACE INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, "
-                    "p_over, t3, p_over_raw, match_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            g = _gate(con, "preds", getattr(r, "team_id", None), getattr(r, "opp_id", None), status, row, st)
+            if g is not None:
+                rows.append(row + g)
+    q = ("INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, p_over, t3, p_over_raw, "
+         "match_id, prematch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    con.executemany("INSERT OR REPLACE " + q, [x for x in rows if x[-1] == "scheduled"])
+    con.executemany("INSERT OR IGNORE " + q, [x for x in rows if x[-1] != "scheduled"])  # never overwrite a confident price
     con.commit()
 
 
@@ -191,7 +196,8 @@ def log_map_odds(records, snapshot_ts, con=None, status=_FETCH):
     for r in records:
         if not r.get("start_time") or pd.Timestamp(r["start_time"]) <= snap:
             continue
-        if _gate(con, "map_odds_log", r.get("team_a_id"), r.get("team_b_id"), status, {"snapshot_ts": str(snap), **r}) is None:
+        if _gate(con, "map_odds_log", r.get("team_a_id"), r.get("team_b_id"), status, {"snapshot_ts": str(snap), **r},
+                 r.get("start_time"), allow_uncertain=False) is None:  # append-only table: only confident snapshots
             continue
         h = _inputs_hash(r)
         last = con.execute("SELECT inputs_hash FROM map_odds_log WHERE source=? AND match_key=? AND start_time=? "
@@ -221,7 +227,9 @@ def grade_match_results(hist, con=None):
                  & (hist.date <= st + pd.Timedelta(hours=12))]
         if h.empty:
             continue
-        h = h[h.match_id == h.match_id.mode().iloc[0]].drop_duplicates("map_number").sort_values("map_number")
+        if h.match_id.nunique() > 1:
+            continue  # two series between these teams in the window (e.g. a rematch): can't tell which one was logged
+        h = h.drop_duplicates("map_number").sort_values("map_number")
         if h.won.isna().any() or list(h.map_number) != list(range(1, len(h) + 1)):
             continue
         need, wins = int(bo) // 2 + 1, int(h.won.sum())
@@ -259,11 +267,24 @@ def map3_report(con=None, bands=(0.5, 0.65, 0.8, 1.0)):
     return g[cols]
 
 
-def _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time):
+def _player_match_rows(hist, pid, opponent, st, match_id=None):
+    """The player's maps in the logged series: by the verified bo3.gg match id when the record has one, else the only
+    series against that opponent in the time window (None if there is none, or several, e.g. a same-day rematch)."""
+    from ..names import team_similarity
+    if match_id is not None and match_id == match_id:
+        h = hist[(hist.player_id == pid) & (hist.match_id == int(match_id))]
+        return h if len(h) else None
+    h = hist[(hist.player_id == pid) & (hist.date >= st - pd.Timedelta(hours=3)) & (hist.date <= st + pd.Timedelta(hours=12))]
+    h = h[h.opponent.map(lambda o: team_similarity(o, opponent) >= 0.75)]
+    if h.empty or h.match_id.nunique() > 1:
+        return None
+    return h
+
+
+def _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time, match_id=None):
     """("graded", total) when every requested map has the player's stats, ("void", None) when a requested map
     was never played because the series was already decided (e.g. Map 3 after a 2-0), None while unresolved
     (not started, match/player not in history yet, or a played map's data is missing)."""
-    from ..names import team_similarity
     st = pd.Timestamp(start_time)
     st = st.tz_localize("UTC") if st.tzinfo is None else st
     if st > pd.Timestamp.now(tz="UTC"):
@@ -271,11 +292,10 @@ def _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time
     pid = resolve_player(player, team)
     if pid is None:
         return None
-    h = hist[(hist.player_id == pid) & (hist.date >= st - pd.Timedelta(hours=3)) & (hist.date <= st + pd.Timedelta(hours=12))]
-    h = h[h.opponent.map(lambda o: team_similarity(o, opponent) >= 0.75)]
-    if h.empty:
+    h = _player_match_rows(hist, pid, opponent, st, match_id)
+    if h is None:
         return None
-    h = h[h.match_id == h.match_id.mode().iloc[0]].drop_duplicates("map_number")
+    h = h.drop_duplicates("map_number")
     mapnos = [int(x) for x in str(maps).split("+")]
     missing = [m for m in mapnos if m not in set(h.map_number)]
     if not missing:
@@ -292,19 +312,17 @@ def _settle(hist, resolve_player, player, team, opponent, stat, maps, start_time
     return ("void", None) if max(wins, len(prior) - wins) >= need else None
 
 
-def _match_of(hist, resolve_player, player, team, opponent, start_time):
+def _match_of(hist, resolve_player, player, team, opponent, start_time, match_id=None):
     """(bo3 match id, verified Map 1 begin) of the series a logged prop belongs to, or (None, None) if not in `hist`."""
-    from ..names import team_similarity
     st = pd.Timestamp(start_time)
     st = st.tz_localize("UTC") if st.tzinfo is None else st
     pid = resolve_player(player, team)
     if pid is None:
         return None, None
-    h = hist[(hist.player_id == pid) & (hist.date >= st - pd.Timedelta(hours=3)) & (hist.date <= st + pd.Timedelta(hours=12))]
-    h = h[h.opponent.map(lambda o: team_similarity(o, opponent) >= 0.75)]
-    if h.empty:
+    h = _player_match_rows(hist, pid, opponent, st, match_id)
+    if h is None:
         return None, None
-    mid = int(h.match_id.mode().iloc[0])
+    mid = int(h.match_id.iloc[0])
     return mid, hist.loc[hist.match_id == mid, "date"].min()
 
 
@@ -331,7 +349,7 @@ def audit(hist, resolve_player, con=None, dry_run=False):
     hist = hist.copy()
     hist["date"] = pd.to_datetime(hist["date"], utc=True, format="ISO8601")
     begin = hist.groupby("match_id").date.min()
-    new = []
+    new, verified = [], []
 
     def mark(tbl, key, reason, mid):
         new.append(dict(tbl=tbl, row_key=str(key), reason=reason, match_id=None if mid is None else int(mid)))
@@ -346,7 +364,8 @@ def audit(hist, resolve_player, con=None, dry_run=False):
                                         (K, "created", "picks", "id", ["source", "player", "stat", "maps", "side", "line"])):
         if D.empty:
             continue
-        mb = [_match_of(hist, resolve_player, r.player, r.team, r.opponent, r.start_time) for r in D.itertuples()]
+        mb = [_match_of(hist, resolve_player, r.player, r.team, r.opponent, r.start_time, getattr(r, "match_id", None))
+              for r in D.itertuples()]
         D = D.assign(mid=[m for m, _ in mb], begin=[b for _, b in mb], st=_ts(D.start_time), t=_ts(D[tcol]))
         D = D[D.mid.notna()]
         late = D[D.t.isna() | (D.t >= D.begin)]
@@ -355,6 +374,8 @@ def audit(hist, resolve_player, con=None, dry_run=False):
         ok = D.drop(late.index).sort_values(["st", "t"])
         for r in ok[ok.duplicated(group + ["mid"], keep="last")].itertuples():
             mark(tbl, getattr(r, keycol), "superseded_reschedule", r.mid)
+        held = ok[ok.prematch.eq("uncertain")] if "prematch" in ok else ok.iloc[:0]
+        verified.extend((tbl, r) for r in held.itertuples())
     R = pd.read_sql("SELECT * FROM match_results", con)
     if len(R):
         R["key"] = R.match_key + "|" + R.start_time
@@ -382,6 +403,14 @@ def audit(hist, resolve_player, con=None, dry_run=False):
         ok = S[~bad].sort_values("created")
         for r in ok[ok.duplicated("sig", keep="last")].itertuples():
             mark("slips", r.id, "duplicate_slip", None)
+    if not dry_run:  # held "uncertain" rows proven to be logged before Map 1 began
+        for tbl, r in verified:
+            if tbl == "preds":
+                con.execute("UPDATE preds SET prematch='verified' WHERE source=? AND player=? AND stat=? AND maps=? AND start_time=?",
+                            (r.source, r.player, r.stat, r.maps, r.start_time))
+            else:
+                con.execute("UPDATE picks SET prematch='verified' WHERE id=?", (int(r.id),))
+        con.commit()
     if not dry_run and new:
         con.executemany("INSERT OR IGNORE INTO exclusions (recorded_ts, tbl, row_key, reason, match_id) VALUES (?,?,?,?,?)",
                         [(_now(), x["tbl"], x["row_key"], x["reason"], x["match_id"]) for x in new])
@@ -403,7 +432,7 @@ def grade_preds(hist, resolve_player, con=None):
     p = pd.read_sql("SELECT rowid AS rid, * FROM preds WHERE actual IS NULL AND COALESCE(void, 0) = 0", con)
     n = 0
     for r in p.itertuples():
-        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time, getattr(r, "match_id", None))
         if res is not None:
             con.execute("UPDATE preds SET actual=?, void=? WHERE rowid=?", (res[1], int(res[0] == "void"), int(r.rid)))
             n += 1
@@ -420,7 +449,7 @@ def resettle(hist, resolve_player, con=None, dry_run=False):
     hist["date"] = pd.to_datetime(hist["date"], utc=True, format="ISO8601")
     changes = []
     for r in pd.read_sql("SELECT rowid AS rid, * FROM preds WHERE actual IS NOT NULL OR COALESCE(void, 0) = 1", con).itertuples():
-        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time, getattr(r, "match_id", None))
         if res is None:
             continue
         old = ("void", None) if r.void == 1 else ("graded", r.actual)
@@ -430,7 +459,7 @@ def resettle(hist, resolve_player, con=None, dry_run=False):
             if not dry_run:
                 con.execute("UPDATE preds SET actual=?, void=? WHERE rowid=?", (res[1], int(res[0] == "void"), int(r.rid)))
     for r in pd.read_sql("SELECT * FROM picks WHERE outcome IS NOT NULL", con).itertuples():
-        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time)
+        res = _settle(hist, resolve_player, r.player, r.team, r.opponent, r.stat, r.maps, r.start_time, getattr(r, "match_id", None))
         if res is None:
             continue
         new = "void" if res[0] == "void" else _outcome(res[1], r.line, r.side)
@@ -451,7 +480,7 @@ def resettle(hist, resolve_player, con=None, dry_run=False):
 def bias_report(con=None):
     """Model vs results on every graded line (not just picks): positive model - actual = model runs high."""
     con = con or connect()
-    p = pd.read_sql("SELECT * FROM preds WHERE actual IS NOT NULL AND COALESCE(t3, 0) = 0", con)
+    p = pd.read_sql("SELECT * FROM preds WHERE actual IS NOT NULL AND COALESCE(t3, 0) = 0 AND COALESCE(prematch, '') != 'uncertain'", con)
     p = p[~pd.Series([pred_key(*r) for r in zip(p.source, p.player, p.stat, p.maps, p.start_time)], index=p.index, dtype=object)
           .isin(excluded(con, "preds"))]
     if p.empty:
@@ -471,7 +500,7 @@ def t3_reliability(con=None):
     """Graded tier-3 lines: predicted P of the side the model favours vs how often that side hit, by probability band
     and market (pushes dropped). Gap > 0 = the model was overconfident in that band."""
     con = con or connect()
-    p = pd.read_sql("SELECT source, player, start_time, stat, maps, line, p_over, actual FROM preds WHERE t3 = 1 AND actual IS NOT NULL", con)
+    p = pd.read_sql("SELECT source, player, start_time, stat, maps, line, p_over, actual FROM preds WHERE t3 = 1 AND actual IS NOT NULL AND COALESCE(prematch, '') != 'uncertain'", con)
     p = p[~pd.Series([pred_key(*r) for r in zip(p.source, p.player, p.stat, p.maps, p.start_time)], index=p.index, dtype=object)
           .isin(excluded(con, "preds"))]
     p = p[p.actual != p.line]
@@ -507,12 +536,12 @@ def log_picks(df: pd.DataFrame, con=None, status=_FETCH):
         row = tuple(str(x) if isinstance(x, pd.Timestamp) else x for x in (
             _now(), *[(_maps(r[c]) if c == "maps" else (None if pd.isna(r[c]) else r[c])) for c in cols],
             int(r.get("t3") is True or r.get("t3") == 1)))
-        mid = _gate(con, "picks", r.get("team_id"), r.get("opp_id"), status, row)
-        if mid is not None:
-            rows.append(row + (mid,))
+        g = _gate(con, "picks", r.get("team_id"), r.get("opp_id"), status, row, r.get("start_time"))
+        if g is not None:
+            rows.append(row + g)
     con.executemany("INSERT OR IGNORE INTO picks (created, source, player, team, opponent, stat, maps, line, side, "
-                    "p_model, breakeven, edge, ev, tier, model_mean, start_time, t3, match_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                    "p_model, breakeven, edge, ev, tier, model_mean, start_time, t3, match_id, prematch) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
     con.commit()
 
 
@@ -537,11 +566,11 @@ def grade(hist: pd.DataFrame, resolve_player, con=None, payouts=None):
     grade_match_results(hist, con)
     n = 0
     for _, p in picks.iterrows():
-        res = _settle(hist, resolve_player, p.player, p.team, p.opponent, p.stat, p.maps, p.start_time)
+        res = _settle(hist, resolve_player, p.player, p.team, p.opponent, p.stat, p.maps, p.start_time, p.get("match_id"))
         if res is None:
             continue
         outcome = "void" if res[0] == "void" else _outcome(res[1], p.line, p.side)
-        _, b = _match_of(hist, resolve_player, p.player, p.team, p.opponent, p.start_time)
+        _, b = _match_of(hist, resolve_player, p.player, p.team, p.opponent, p.start_time, p.get("match_id"))
         close = con.execute("SELECT line FROM line_snapshots WHERE source=? AND player=? AND stat=? AND maps=? "
                             "AND start_time=? AND (? IS NULL OR ts < ?) ORDER BY ts DESC LIMIT 1",
                             (p.source, p.player, p.stat, p.maps, p.start_time, *([None if b is None else b.isoformat()] * 2))).fetchone()
@@ -583,11 +612,12 @@ def pending(con=None):
 def performance(con=None):
     """ROI, hit rate, CLV and calibration of graded picks."""
     con = con or connect()
-    allp = pd.read_sql("SELECT * FROM picks WHERE outcome IS NOT NULL", con)
+    allp = pd.read_sql("SELECT * FROM picks WHERE outcome IS NOT NULL AND COALESCE(prematch, '') != 'uncertain'", con)
     allp = allp[~allp.id.astype(str).isin(excluded(con, "picks"))]
     p = allp[allp.outcome.isin(["win", "loss"])].copy()
     s = pd.read_sql("SELECT * FROM slips WHERE hits IS NOT NULL", con)
-    s = s[~s.id.astype(str).isin(excluded(con, "slips"))]
+    held = {r[0] for r in con.execute("SELECT id FROM picks WHERE prematch = 'uncertain'")}
+    s = s[~s.id.astype(str).isin(excluded(con, "slips")) & ~s.legs.map(lambda ls: bool(held & set(json.loads(ls))))]
     other = allp.outcome.value_counts().to_dict()
     if p.empty:
         return {"picks": 0, "pushes": other.get("push", 0), "voids": other.get("void", 0)}, p, s

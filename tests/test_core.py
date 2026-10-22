@@ -12,7 +12,7 @@ from cs2model.parlay import engine as E
 from cs2model.scraper import http, lines
 from cs2model.tracking import store
 
-UP = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False, "scheduled": None}}  # verified pre-match
+UP = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False, "scheduled": "2999-01-01T00:00:00+00:00"}}
 
 
 def test_american_decimal_roundtrip():
@@ -384,9 +384,8 @@ def test_preds_log_grade_and_bias_report(tmp_path):
     slate = pd.DataFrame([{"source": "underdog", "player": "x", "team": "A", "opponent": "B", "stat": "kills", "maps": [1, 2],
                            "start_time": st, "odds_type": "standard", "line": 30.5, "model_mean": 33.0, "p_over": 0.6,
                            "team_id": 1, "opp_id": 2}])
-    upcoming = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False, "scheduled": None}}
-    store.log_preds(slate, con, status=upcoming)
-    store.log_preds(slate.assign(line=31.5), con, status=upcoming)  # re-pricing keeps only the latest pre-start price
+    store.log_preds(slate, con, status=UP)
+    store.log_preds(slate.assign(line=31.5), con, status=UP)  # re-pricing keeps only the latest pre-start price
     assert con.execute("SELECT count(*), max(line) FROM preds").fetchone() == (1, 31.5)
     con.execute("UPDATE preds SET actual=29")
     br = store.bias_report(con)

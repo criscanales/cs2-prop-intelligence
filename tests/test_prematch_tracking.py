@@ -28,15 +28,17 @@ def _quar(con):
     return dict(con.execute("SELECT tbl || ':' || reason, count(*) FROM quarantine GROUP BY 1").fetchall())
 
 
-def _pred(con, st, ts, maps="1+2", source="underdog", line=22.5, t3=0, p_over=0.6):
-    con.execute("INSERT INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, p_over, t3) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (source, "p10", "T1", "T2", "kills", maps, st.isoformat(), str(ts), line, 23.0, p_over, t3))
+def _pred(con, st, ts, maps="1+2", source="underdog", line=22.5, t3=0, p_over=0.6, match_id=None, prematch=None):
+    con.execute("INSERT INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, p_over, t3, "
+                "match_id, prematch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (source, "p10", "T1", "T2", "kills", maps, st.isoformat(), str(ts), line, 23.0, p_over, t3, match_id, prematch))
 
 
-def _pick(con, st, created, maps="1+2", source="underdog", line=22.5, side="over", t3=0):
+def _pick(con, st, created, maps="1+2", source="underdog", line=22.5, side="over", t3=0, match_id=None, prematch=None):
     return con.execute("INSERT INTO picks (created, source, player, team, opponent, stat, maps, line, side, p_model, breakeven, edge, "
-                       "tier, start_time, t3) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                       (str(created), source, "p10", "T1", "T2", "kills", maps, line, side, 0.6, 0.5, 0.1, "B", st.isoformat(), t3)).lastrowid
+                       "tier, start_time, t3, match_id, prematch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                       (str(created), source, "p10", "T1", "T2", "kills", maps, line, side, 0.6, 0.5, 0.1, "B", st.isoformat(), t3,
+                        match_id, prematch)).lastrowid
 
 
 def _excl(con):
@@ -212,13 +214,64 @@ def test_fetch_match_status_reads_upcoming_live_and_finished(monkeypatch):
     def fake(url, ttl=None, params=None):
         if url.endswith("upcoming"):
             return {"data": {"tiers": {"high_tier": {"matches": [
-                {"id": 1, "team1_id": 1, "team2_id": 2, "status": "upcoming", "games": []},
+                {"id": 1, "team1_id": 1, "team2_id": 2, "status": "upcoming", "games": [], "start_date": "2999-01-01T00:00:00Z"},
                 {"id": 2, "team1_id": 3, "team2_id": 4, "status": "upcoming", "games": [{"number": 1, "status": "current"}]}]}}}}
         if url.endswith("live"):
             return {"data": [{"id": 3, "team1_id": 5, "team2_id": 6, "status": "current", "games": []}]}
         return {"data": {"tiers": {"low_tier": {"matches": [{"id": 4, "team1_id": 7, "team2_id": 8, "status": "finished"}]}}}}
     monkeypatch.setattr(http, "fetch_json", fake)
     s = prematch.fetch_match_status()
-    assert {k: v["started"] for k, v in s.items()} == {frozenset((1, 2)): False, frozenset((3, 4)): True,
-                                                       frozenset((5, 6)): True, frozenset((7, 8)): True}
-    assert prematch.classify(2, 1, s) == (True, 1, None) and prematch.classify(4, 3, s) == (False, 2, "started")
+    assert {k: [e["started"] for e in v] for k, v in s.items()} == {frozenset((1, 2)): [False], frozenset((3, 4)): [True],
+                                                                  frozenset((5, 6)): [True], frozenset((7, 8)): [True]}
+    assert prematch.classify(2, 1, s) == ("scheduled", 1, None) and prematch.classify(4, 3, s) == (None, 2, "started")
+
+
+def test_same_teams_in_two_matches_use_the_verified_bo3_match_id(tmp_path):
+    con = store.connect(tmp_path / "t.db")
+    now = pd.Timestamp.now(tz="UTC")
+    two = {frozenset((1, 2)): [
+        {"match_id": 7, "status": "finished", "started": True, "scheduled": (now - pd.Timedelta(hours=5)).isoformat()},
+        {"match_id": 8, "status": "upcoming", "started": False, "scheduled": (now + pd.Timedelta(hours=3)).isoformat()}]}
+    store.log_preds(_row(now + pd.Timedelta(hours=3, minutes=10)), con, status=two)  # the rematch, not the finished series
+    assert con.execute("SELECT match_id, prematch FROM preds").fetchall() == [(8, "scheduled")]
+    store.log_picks(_row(now - pd.Timedelta(hours=4)), con, status=two)  # nearest to the series that already started
+    close = {frozenset((1, 2)): [
+        {"match_id": 8, "status": "upcoming", "started": False, "scheduled": (now + pd.Timedelta(hours=2)).isoformat()},
+        {"match_id": 9, "status": "upcoming", "started": False, "scheduled": (now + pd.Timedelta(hours=3)).isoformat()}]}
+    store.log_picks(_row(now + pd.Timedelta(hours=2, minutes=30)), con, status=close)
+    assert _quar(con) == {"picks:started": 1, "picks:ambiguous_match": 1}
+    assert con.execute("SELECT match_id FROM quarantine WHERE reason='started'").fetchone() == (7,)
+    assert prematch.classify(1, 2, two) == (None, None, "ambiguous_match")  # no start time to tell them apart
+
+
+def test_grading_uses_the_stored_match_id_and_skips_ambiguous_legacy_rows(tmp_path, st):
+    con = store.connect(tmp_path / "t.db")
+    later = st + pd.Timedelta(hours=4)
+    h = pd.concat([_series_hist([1, 1], st),  # match 7: p10 has 11 + 12 kills
+                   _series_hist([1, 1], later).assign(match_id=8, game_id=lambda d: d.game_id + 10, kills=lambda d: d.kills + 10)])
+    _pred(con, later, later - pd.Timedelta(hours=1), match_id=8, prematch="scheduled")
+    _pred(con, st, st - pd.Timedelta(hours=1), source="prizepicks")  # legacy row: both series fall in its time window
+    store.grade(h, _res, con)
+    assert dict(con.execute("SELECT source, actual FROM preds").fetchall()) == {"underdog": 43.0, "prizepicks": None}
+
+
+def test_stale_upcoming_status_is_held_until_the_history_verifies_it(tmp_path, st):
+    con = store.connect(tmp_path / "t.db")
+    now = pd.Timestamp.now(tz="UTC")
+    stale = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False,
+                                 "scheduled": (now - pd.Timedelta(minutes=20)).isoformat()}}
+    bst = now + pd.Timedelta(hours=1)  # the platform still shows a future start
+    store.log_preds(_row(bst), con, status=UP)
+    store.log_preds(_row(bst, line=12.5), con, status=stale)  # never overwrites the confident pre-match price
+    store.log_preds(_row(bst + pd.Timedelta(minutes=30)), con, status=stale)
+    assert sorted(con.execute("SELECT line, prematch FROM preds").fetchall()) == [(13.5, "scheduled"), (13.5, "uncertain")]
+    assert store.log_map_odds([_rec(bst)], now, con, status=stale) == 0
+    assert _quar(con) == {"map_odds_log:past_scheduled_start": 1}
+    late = _pick(con, st, st + pd.Timedelta(minutes=5), prematch="uncertain")  # Map 1 had begun at st
+    early = _pick(con, st, st - pd.Timedelta(minutes=30), line=21.5, prematch="uncertain")
+    con.execute("UPDATE picks SET outcome='win', actual=23")  # settled but not yet audited
+    assert store.performance(con)[0]["picks"] == 0  # held rows never reach reports unverified
+    store.audit(_series_hist([1, 1], st), _res, con)
+    assert dict(con.execute("SELECT id, prematch FROM picks").fetchall()) == {late: "uncertain", early: "verified"}
+    assert _excl(con) == {("picks", str(late)): "post_start"}
+    assert store.performance(con)[0]["picks"] == 1
