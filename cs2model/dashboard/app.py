@@ -1095,32 +1095,33 @@ def history_filters(r, h, maps, piv, scope):
     sm = HF.series_table(h, maps).reindex(piv.index)
     pre = f"hf_{scope}_{r.name}_"
 
+    wk = HF.widget_prefix(st.session_state, pre)
+
     def reset():
-        for k in [k for k in st.session_state if str(k).startswith(pre)]:
-            del st.session_state[k]
+        HF.reset_state(st.session_state, pre)
     ev = sm.assign(d=piv.date).dropna(subset=["event"]).groupby("event").d.max().sort_values(ascending=False)
     names = event_names(tuple(int(e) for e in ev.index))
     lo, hi = int(sm.rounds.min()), int(sm.rounds.max())
     c = st.columns([1.1, 1.1, 4], vertical_alignment="center")
     with c[0].popover("Filters", icon=":material/tune:", width="stretch"):
         a, b = st.columns(2)
-        f = {"opp": a.multiselect("Opponent", sorted(sm.opp.dropna().unique()), key=pre + "opp", placeholder="All"),
-             "team": b.multiselect("Team", sorted(sm.team.dropna().unique()), key=pre + "team", placeholder="All",
+        f = {"opp": a.multiselect("Opponent", sorted(sm.opp.dropna().unique()), key=wk + "opp", placeholder="All"),
+             "team": b.multiselect("Team", sorted(sm.team.dropna().unique()), key=wk + "team", placeholder="All",
                                    help="Includes the player's previous teams.")}
         f["event"] = st.multiselect("Event", [int(e) for e in ev.index], format_func=lambda t: names.get(t, f"Event {t}"),
-                                    key=pre + "event", placeholder="All")
+                                    key=wk + "event", placeholder="All")
         a, b, d = st.columns(3)
-        f["result"] = a.selectbox("Series result", ["Any", "Won", "Lost"], key=pre + "result")
-        f["lan"] = b.selectbox("LAN / online", ["Any", "LAN", "Online"], key=pre + "lan")
+        f["result"] = a.selectbox("Series result", ["Any", "Won", "Lost"], key=wk + "result")
+        f["lan"] = b.selectbox("LAN / online", ["Any", "LAN", "Online"], key=wk + "lan")
         f["bo"] = d.multiselect("Series length", sorted(int(x) for x in sm.bo.dropna().unique()), format_func=lambda x: f"BO{x}",
-                                key=pre + "bo", placeholder="Any")
+                                key=wk + "bo", placeholder="Any")
         f["tier"] = st.multiselect("Tier", sorted(sm.tier.dropna().unique(), key="sabcd".find), format_func=lambda t: f"Tier {t.upper()}",
-                                   key=pre + "tier", placeholder="Any")
-        f["rounds"] = (st.slider(f"Total rounds ({r.maps_label})", lo, hi, (lo, hi), key=pre + "rounds",
+                                   key=wk + "tier", placeholder="Any")
+        f["rounds"] = (st.slider(f"Total rounds ({r.maps_label})", lo, hi, (lo, hi), key=wk + "rounds",
                                  help="Rounds summed over the counted maps. A filter only: the blowout marker stays an 8+ round margin.")
                        if hi > lo else None)
         f["maps"] = st.multiselect("Includes maps", sorted({m for t in sm.map_names for m in t}), format_func=nice_map,
-                                   key=pre + "maps", placeholder="Select maps", help="Keeps series where any counted map is one of these.")
+                                   key=wk + "maps", placeholder="Select maps", help="Keeps series where any counted map is one of these.")
     n = HF.n_active(f, (lo, hi))
     c[1].button("Reset filters", on_click=reset, disabled=not n, key=pre + "reset", width="stretch")
     out = piv.loc[HF.apply(sm, f)]
@@ -1192,7 +1193,7 @@ def career_panel(r):
                   f"{n('damage_sum'):,} damage ÷ {rnd:,} rounds" if c.get("damage_sum") else "")]
         st.markdown('<div class="kpis">' + "".join(
             f'<div class="kpi"><div class="k">{k}</div><div class="v" style="font-size:{".95" if len(v) > 12 else "1.15"}rem;'
-            f'white-space:nowrap">{v}</div>'
+            f'white-space:normal">{HF.kpi_value_html(v)}</div>'
             f'<div style="font-size:.72rem;color:var(--tx2)">{html.escape(sub)}</div></div>' for k, v, sub in items) + "</div>",
             unsafe_allow_html=True)
         st.caption("Career totals from bo3.gg for every match it has on record: all tiers and all dates, not only tier 1-2 "
