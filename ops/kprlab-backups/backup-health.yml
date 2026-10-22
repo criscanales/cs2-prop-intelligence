@@ -1,0 +1,68 @@
+# Installed in the private backups repo (criscanales/kprlab-backups) as .github/workflows/backup-health.yml.
+# Runs on GitHub, independent of the Devin machine: fails (GitHub emails the owner) and opens a backup-alert
+# issue when the newest backup is too old, the daemon heartbeat stopped, or the last backup attempt failed.
+name: backup-health
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+env:
+  MAX_BACKUP_AGE_H: "26"
+  MAX_HEARTBEAT_AGE_H: "2"
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check newest backup, heartbeat and last result
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view tracking-backups --repo "$GITHUB_REPOSITORY" --json assets > assets.json
+          gh release download tracking-backups --repo "$GITHUB_REPOSITORY" --pattern kprlab-health.json --clobber || echo '{}' > kprlab-health.json
+          python3 - <<'PY'
+          import json, os, re, sys
+          from datetime import datetime, timezone
+          now = datetime.now(timezone.utc)
+          names = [a["name"] for a in json.load(open("assets.json"))["assets"]]
+          ts = [datetime.strptime(m[1], "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+                for n in names if (m := re.match(r"kprlab-tracking-(\d{8}T\d{6}Z)-\w+-[0-9a-f]{12}\.zip$", n))]
+          h = json.load(open("kprlab-health.json"))
+          problems = []
+          newest = max(ts) if ts else None
+          # an unchanged DB is not re-uploaded, so a fresh heartbeat with last_result=unchanged also counts as current
+          checked = h.get("last_success") if h.get("last_result") != "unchanged" else h.get("heartbeat_utc")
+          ref = max(filter(None, [newest, datetime.fromisoformat(checked) if checked else None]), default=None)
+          if ref is None or (now - ref).total_seconds() / 3600 > float(os.environ["MAX_BACKUP_AGE_H"]):
+              problems.append(f"no current backup (newest stored: {newest})")
+          hb = h.get("heartbeat_utc")
+          if not hb or (now - datetime.fromisoformat(hb)).total_seconds() / 3600 > float(os.environ["MAX_HEARTBEAT_AGE_H"]):
+              problems.append(f"backup daemon heartbeat stale or missing (last: {hb}); Devin machine may be down or asleep")
+          if h.get("last_result") == "failed":
+              problems.append(f"last backup attempt failed: {h.get('last_error')} (consecutive: {h.get('consecutive_failures')})")
+          print(json.dumps({"now": now.isoformat(), "backups": len(ts), "newest": str(newest), "health": h}, indent=1, default=str))
+          open("problems.txt", "w").write("\n".join(problems))
+          sys.exit(1 if problems else 0)
+          PY
+      - name: Open or update alert issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="$(date -u +%FT%TZ): $(cat problems.txt 2>/dev/null || echo 'health check could not run')
+          Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh label create backup-alert --repo "$GITHUB_REPOSITORY" --color d73a4a --force
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label backup-alert --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$body";
+          else gh issue create --repo "$GITHUB_REPOSITORY" --title "KPR Lab tracking backup health check failing" --label backup-alert --body "$body"; fi
+      - name: Close alert issue when healthy
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh issue list --repo "$GITHUB_REPOSITORY" --label backup-alert --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then gh issue close "$n" --repo "$GITHUB_REPOSITORY" --comment "$(date -u +%FT%TZ): health check passing again. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; fi

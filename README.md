@@ -257,3 +257,6 @@ profit and live calibration.
 - bo3.gg has no AWPer/role tags in the per-map stats feed. Role is approximated by opening-duel involvement.
 - PrizePicks/Underdog promos, boosted lines and state-specific payouts are not modelled. Keep `payouts.yaml` current.
 - Not betting advice. Check local laws and platform terms.
+
+## Tracking backups
+`tracking.db` is backed up off-machine to a private repo's release assets (daily + after grading/collection runs, 35-day retention, verified restore). See [docs/backups.md](docs/backups.md), which also lists permanent tracking data gaps.
