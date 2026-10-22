@@ -31,6 +31,22 @@ from cs2model.tracking import store
 from cs2model.training import bootstrap as BS
 from cs2model.training.train import MODEL_DIR
 
+# Narrow windows start with the sidebar collapsed, unless the user has already chosen a state (Streamlit stores it).
+# The automatic collapse is not stored, so a later wide window still opens with the sidebar.
+SIDEBAR_JS = """<script>(() => {
+  const w = window.parent || window, ls = w.localStorage, KEY = 'stSidebarCollapsed-';
+  if (w.innerWidth > 900 || w.__kprSidebarAuto || Object.keys(ls).some(k => k.startsWith(KEY))) return;
+  w.__kprSidebarAuto = true;
+  const go = n => {
+    const d = w.document, sb = d.querySelector('section[data-testid="stSidebar"]');
+    const b = d.querySelector('[data-testid="stSidebarCollapseButton"] button');
+    if (!(sb && b)) { if (n > 0) setTimeout(() => go(n - 1), 250); return; }
+    if (sb.getAttribute('aria-expanded') !== 'true') return;
+    b.click();
+    setTimeout(() => Object.keys(ls).filter(k => k.startsWith(KEY)).forEach(k => ls.removeItem(k)), 400);
+  };
+  go(40);
+})();</script>"""
 st.set_page_config(page_title="KPR Lab · CS2 Props +EV", layout="wide",
                    page_icon=str(Path(__file__).parent / "assets" / "kprlab_icon_512.png"))
 st.markdown("""<style>
@@ -170,7 +186,7 @@ div[data-testid="stDataFrame"] {border:1px solid var(--line);border-radius:var(-
 .phead .mt {color:var(--tx2);font-size:.8rem;margin-top:4px;}
 /* refinement pass */
 :root {--accent:#e8752a;--accent-soft:rgba(232,117,42,.10);--neu:#c3cad4;}
-section[data-testid="stSidebar"] {width:272px!important;min-width:272px!important;}
+section[data-testid="stSidebar"][aria-expanded="true"] {width:272px!important;min-width:272px!important;}
 section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {padding:.75rem 1rem 1rem;}
 section[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {gap:.55rem;}
 .block-container {max-width:none!important;padding-left:2rem!important;padding-right:2rem!important;padding-top:3.75rem!important;}
@@ -323,7 +339,22 @@ div[role="dialog"] {overflow-x:hidden;}
 .pp-mcs {display:flex;flex-wrap:wrap;gap:10px 28px;align-items:center;margin:4px 0 10px;font-family:var(--fm);font-size:.85rem;color:var(--tx);}
 .pp-mcs > div {display:flex;align-items:center;gap:10px;} .pp-mcs .k {font-family:var(--fd);font-size:.68rem;letter-spacing:.12em;
   text-transform:uppercase;color:var(--mut);} .pp-mcs b {font-weight:600;}
+/* narrow windows: tighter padding, stacked distribution cards, rows that wrap instead of squeezing labels */
+@media (max-width:900px) {.block-container {padding-left:1.25rem!important;padding-right:1.25rem!important;}}
+.st-key-pdist {container-type:inline-size;}
+@container (max-width:860px) {
+  .st-key-pdist > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {flex-wrap:wrap;}
+  .st-key-pdist > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {flex:1 1 100%!important;width:100%!important;min-width:100%!important;}
+  .st-key-pcards {flex-direction:row!important;flex-wrap:wrap;}
+  .st-key-pcards > [data-testid="stLayoutWrapper"] {flex:1 1 300px;min-width:0;}}
+.st-key-pcards [data-testid="stMetricLabel"] *, .st-key-pcards [data-testid="stMetricValue"] * {white-space:normal!important;overflow:visible!important;text-overflow:clip!important;}
+[class*="st-key-fitrow"] > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] {flex-wrap:wrap;}
+[class*="st-key-fitrow"] > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {min-width:max-content!important;}
+[class*="st-key-fitrow"] > [data-testid="stLayoutWrapper"] > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:last-child {min-width:min(240px,100%)!important;}
+.st-key-kprjs, [data-testid="stLayoutWrapper"]:has(> .st-key-kprjs) {display:none;}
 </style>""", unsafe_allow_html=True)
+with st.container(key="kprjs"):
+    st.html(SIDEBAR_JS, unsafe_allow_javascript=True)
 
 settings, payouts = E.load_yaml("settings.yaml"), E.load_yaml("payouts.yaml")
 
@@ -1027,7 +1058,8 @@ def series_chart(r, h, scope):
         st.info(f"No series vs {r.opponent} with {r.maps_label} played in the last 6 months.")
         return
     v = h2h if win == "H2H" else piv.tail({"L5": 5, "L10": 10, "L15": 15}.get(win, len(piv)))
-    t = st.columns([1, 1, 3])
+    with st.container(key=f"fitrow_tog_{scope}_{r.name}"):
+        t = st.columns([1, 1, 3])
     show_ot = t[0].toggle("High round maps", True, key=f"ot_{scope}_{r.name}", help="Mark series where a map went to overtime (25+ rounds).")
     show_bl = t[1].toggle("Blowout maps", True, key=f"bl_{scope}_{r.name}", help="Mark series where a map was won by 8+ rounds (e.g. 13-5).")
     ot_f = v.ot.astype(bool).values & show_ot
@@ -1102,7 +1134,8 @@ def history_filters(r, h, maps, piv, scope):
     ev = sm.assign(d=piv.date).dropna(subset=["event"]).groupby("event").d.max().sort_values(ascending=False)
     names = event_names(tuple(int(e) for e in ev.index))
     lo, hi = int(sm.rounds.min()), int(sm.rounds.max())
-    c = st.columns([1.1, 1.1, 4], vertical_alignment="center")
+    with st.container(key=f"fitrow_{pre}"):
+        c = st.columns([1.1, 1.1, 4], vertical_alignment="center")
     with c[0].popover("Filters", icon=":material/tune:", width="stretch"):
         a, b = st.columns(2)
         f = {"opp": a.multiselect("Opponent", sorted(sm.opp.dropna().unique()), key=wk + "opp", placeholder="All"),
@@ -1503,7 +1536,8 @@ with tab_player:
         pmf = details[pick]["pmf"]
         st.markdown(profile_header(r), unsafe_allow_html=True)
         career_panel(r)
-        a, b = st.columns([3, 2])
+        with st.container(key="pdist"):
+            a, b = st.columns([3, 2])
         with a:
             vals = np.flatnonzero(pmf > 5e-4)
             fig = go.Figure(go.Bar(x=vals, y=pmf[vals], marker_color=["#22c55e" if v > r.line else "#ef4444" for v in vals]))
@@ -1514,15 +1548,16 @@ with tab_player:
                               xaxis_title=r.stat, yaxis_title="probability", bargap=0.05)
             st.plotly_chart(fig, width="stretch")
         with b:
-            m = st.columns(2)
-            m[0].metric("P(over)", f"{r.p_over:.1%}")
-            m[1].metric("P(under)", f"{r.p_under:.1%}")
-            m = st.columns(2)
-            if t3_experimental(r):
-                m[0].metric("Unvalidated model difference", f"{r.edge:+.1%}", help=T3X_HELP)
-            else:
-                m[0].metric("Edge", f"{r.edge:+.1%}", r.side, help=HELP["edge"])
-            m[1].metric("Confidence tier", r.tier, help=HELP["tier"])
+            with st.container(key="pcards"):
+                m = st.columns(2)
+                m[0].metric("P(over)", f"{r.p_over:.1%}")
+                m[1].metric("P(under)", f"{r.p_under:.1%}")
+                m = st.columns(2)
+                if t3_experimental(r):
+                    m[0].metric("Unvalidated model difference", f"{r.edge:+.1%}", help=T3X_HELP)
+                else:
+                    m[0].metric("Edge", f"{r.edge:+.1%}", r.side, help=HELP["edge"])
+                m[1].metric("Confidence tier", r.tier, help=HELP["tier"])
             st.caption(r.reason)
             if r["flags"]:
                 st.warning(r["flags"])
