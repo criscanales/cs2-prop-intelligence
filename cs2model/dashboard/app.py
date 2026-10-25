@@ -1464,7 +1464,7 @@ with tab_slate:
     st.markdown('<div class="sect">Full board</div>', unsafe_allow_html=True)
     if pricing:
         st.warning("Repricing in progress: showing the previous slate until the new one is ready.")
-    view = view.assign(logo=view.team_id.map(lambda t: LOGOS.get(int(t))), start=pd.to_datetime(view.start_time, utc=True, errors="coerce"))
+    view = view.assign(logo=view.team_id.map(lambda t: LOGOS.get(int(t)) or ""), start=pd.to_datetime(view.start_time, utc=True, errors="coerce"))
     _pw = view.get("p_series_win", pd.Series(np.nan, index=view.index))
     _ok = [pw == pw and src in ("direct", "maps") and prematch_odds_ok(os_, at, st_) for pw, src, os_, at, st_ in
            zip(_pw, view.get("series_src", pd.Series(None, index=view.index)), view.odds_source,
@@ -1530,7 +1530,7 @@ with tab_slate:
                      "n_maps": st.column_config.Column("Maps n", width=65, help="Prior maps in the player's history"),
                      "source": st.column_config.Column("Platform", width=90), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
     rows = sel.selection.rows if sel is not None else []
-    k = t.index[rows[0]] if rows else None
+    k = t.index[rows[0]] if rows and rows[0] < len(t) else None
     if k is None:
         st.session_state.board_open = None
     elif st.session_state.get("board_open") != k:
