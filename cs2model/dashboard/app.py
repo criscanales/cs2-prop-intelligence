@@ -1472,11 +1472,13 @@ with tab_slate:
     _pw = _pw.where(_ok)
     view = view.assign(ml=[f"{p:.0%} · {american(p)}" if p == p else "" for p in _pw],
                        ml_fit=[ml_support(sd, p) for sd, p in zip(view.side, _pw)])
-    cols = ["chg", "logo", "player", "team", "opponent", "start", "maps_label", "stat", "line", "side", "edge", "ml", "ml_fit",
-            "model_mean", "p_over", "p_under", "ev", "tier", "n_maps", "source", "why"]
-    t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
+    view = view.assign(matchup=view.team.astype(str) + " vs " + view.opponent.astype(str),
+                       prop=view.stat.astype(str).str.capitalize() + " · " + view.maps_label.astype(str))
+    cols = ["logo", "player", "matchup", "prop", "line", "side", "edge", "ml", "ev", "tier", "model_mean", "p_over", "p_under",
+            "start", "n_maps", "source", "why"]
+    t = view.sort_values("edge", ascending=False)[cols].rename(columns={"model_mean": "mean"})
     t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
-    t["ml_fit"] = t.ml_fit.map({"supports": "✓ supports", "against": "✗ against", "neutral": "· neutral"}).fillna("")
+    t["ml"] = np.where(view.loc[t.index, "ml_fit"].eq("supports") & t.ml.ne(""), "✓ " + t.ml, t.ml)
     if "t3" in view:
         t3v = view.loc[t.index]
         t.loc[t3v.t3.astype(bool), "player"] += np.where(t3v.t3_validated[t3v.t3.astype(bool)].astype(bool), " · T3", " · T3 exp.")
@@ -1487,15 +1489,17 @@ with tab_slate:
         out = []
         for c in row.index:
             x = bg
-            if c == "side":
+            if c == "player":
+                x += "color: #f5f7fa; font-weight: 700;"
+            elif c == "side":
                 x += f"color: {'#22c55e' if r.side == 'over' else '#ef4444'};"
             elif c in ("edge", "ev") and row[c] == row[c]:
                 x += f"color: {'#86efac' if row[c] > 0 else '#7b8794'};"
             elif c == "tier":
                 x += {"A": "color: #ff7a1a;", "B": "color: #bcd3ea;"}.get(r.tier, "color: #7b8794;")
-            elif c == "ml_fit":
-                x += {"supports": "color: #86efac;", "against": "color: #fca5a5;"}.get(r.ml_fit, "color: #7b8794;")
-            elif c in ("chg", "n_maps", "source", "why"):
+            elif c == "ml":
+                x += "color: #86efac;" if r.ml_fit == "supports" else "color: #9aa7b6;"
+            elif c in ("start", "n_maps", "source", "why"):
                 x += "color: #9aa7b6;"
             out.append(x)
         return out
@@ -1504,23 +1508,21 @@ with tab_slate:
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"}, na_rep="")
     sel = st.dataframe(sty, width="stretch", height=720, hide_index=True, on_select="rerun", selection_mode="single-row", key="board",
                  column_config={
-                     "chg": st.column_config.Column("Chg", width=70, help="NEW = line added, a→b = line moved since last update"),
-                     "logo": st.column_config.ImageColumn("", width=36),
-                     "player": st.column_config.Column("Player", width=110), "team": st.column_config.Column("Team", width=120),
-                     "opponent": st.column_config.Column("Opponent", width=120),
-                     "start": st.column_config.DatetimeColumn("Start (ET)", width=150, format="ddd D MMM, h:mm A", timezone=TZ, help="Match start time, US Eastern (EST/EDT)"),
-                     "maps": st.column_config.Column("Maps", width=80),
-                     "stat": st.column_config.Column("Stat", width=85), "line": st.column_config.Column("Line", width=60),
+                     "logo": st.column_config.ImageColumn("", width=40),
+                     "player": st.column_config.Column("Player", width=130),
+                     "matchup": st.column_config.Column("Matchup", width=230, help="Player's team vs opponent"),
+                     "prop": st.column_config.Column("Prop", width=150), "line": st.column_config.Column("Line", width=60),
+                     "side": st.column_config.Column("Side", width=85),
+                     "edge": st.column_config.Column("Edge", width=75, help=HELP["edge"]),
+                     "ml": st.column_config.Column("Team ML", width=125, help="Pre-match series win probability of the player's team "
+                                                   "(no-vig book or market price) and its fair American odds. ✓ = the moneyline "
+                                                   "leans the same way as the pick (favourite for over, underdog for under; 45 to "
+                                                   "55% counts as neutral). Blank when no pre-start book snapshot exists. "
+                                                   "Informational only, not used by the model."),
+                     "ev": st.column_config.Column("EV", width=70, help=HELP["ev"]), "tier": st.column_config.Column("Conf", width=55, help=HELP["tier"]),
                      "mean": st.column_config.Column("Mean", width=60, help="Mean of the model's predictive distribution"),
                      "p_over": st.column_config.Column("P(over)", width=75), "p_under": st.column_config.Column("P(under)", width=80),
-                     "side": st.column_config.Column("Side", width=80),
-                     "ml": st.column_config.Column("Team ML", width=105, help="Pre-match series win probability of the player's team "
-                                                   "(no-vig book or market price) and its fair American odds. Blank when no "
-                                                   "pre-start book snapshot exists. Informational only, not used by the model."),
-                     "ml_fit": st.column_config.Column("ML lean", width=100, help="Whether the moneyline leans the same way as the "
-                                                       "pick: favourite = over, underdog = under, 45 to 55% = neutral. A simple "
-                                                       "heuristic for context, not a model input or filter."), "edge": st.column_config.Column("Edge", width=70, help=HELP["edge"]),
-                     "ev": st.column_config.Column("EV", width=70, help=HELP["ev"]), "tier": st.column_config.Column("Conf", width=50, help=HELP["tier"]),
+                     "start": st.column_config.DatetimeColumn("Start (ET)", width=150, format="ddd D MMM, h:mm A", timezone=TZ, help="Match start time, US Eastern (EST/EDT)"),
                      "n_maps": st.column_config.Column("Maps n", width=65, help="Prior maps in the player's history"),
                      "source": st.column_config.Column("Platform", width=90), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
     rows = sel.selection.rows if sel is not None else []
@@ -1531,7 +1533,7 @@ with tab_slate:
         st.session_state.board_open = k
         player_dialog(k)
     st.markdown('<div class="sect">Actions</div>', unsafe_allow_html=True)
-    st.caption("Green rows = +EV (passes all rules) · ▲ over / ▼ under · click a header to sort, click a row to open the player panel. Edge = model P(side) − platform breakeven.")
+    st.caption("Highlighted rows = +EV (passes all rules) · ▲ over / ▼ under · click a header to sort, click a row to open the player panel. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
     d1.download_button("Export +EV picks (CSV)", picks.drop(columns=["maps"]).to_csv(index=False), "cs2_picks.csv")
