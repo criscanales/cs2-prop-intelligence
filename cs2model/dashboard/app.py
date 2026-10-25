@@ -17,7 +17,7 @@ import streamlit.components.v1 as components
 
 from cs2model.inference import analytic as A
 from cs2model.parlay import engine as E
-from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, line_sig, prematch_odds_ok, run_slate, stake_cap
+from cs2model.pipeline import build_slips, diff_sig, hit_labels, hit_matrix, line_sig, ml_support, prematch_odds_ok, run_slate, stake_cap
 from cs2model.features.build import AWP_MIN_MAPS, AWP_PATH, attach_awp, awp_role
 from cs2model.inference.predict import Predictor, line_probs
 from cs2model.odds import decimal_to_american
@@ -1465,21 +1465,40 @@ with tab_slate:
     if pricing:
         st.warning("Repricing in progress: showing the previous slate until the new one is ready.")
     view = view.assign(logo=view.team_id.map(lambda t: LOGOS.get(int(t))), start=pd.to_datetime(view.start_time, utc=True, errors="coerce"))
+    _pw = view.get("p_series_win", pd.Series(np.nan, index=view.index))
+    _ok = [pw == pw and src in ("direct", "maps") and prematch_odds_ok(os_, at, st_) for pw, src, os_, at, st_ in
+           zip(_pw, view.get("series_src", pd.Series(None, index=view.index)), view.odds_source,
+               view.get("odds_at", pd.Series(None, index=view.index)), view.start_time)]
+    _pw = _pw.where(_ok)
+    view = view.assign(ml=[f"{p:.0%} · {american(p)}" if p == p else "" for p in _pw],
+                       ml_fit=[ml_support(sd, p) for sd, p in zip(view.side, _pw)])
     cols = ["chg", "logo", "player", "team", "opponent", "start", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
-            "edge", "ev", "tier", "n_maps", "source", "why"]
+            "ml", "ml_fit", "edge", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
     t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
+    t["ml_fit"] = t.ml_fit.map({"supports": "✓ supports", "against": "✗ against", "neutral": "· neutral"}).fillna("")
     if "t3" in view:
         t3v = view.loc[t.index]
         t.loc[t3v.t3.astype(bool), "player"] += np.where(t3v.t3_validated[t3v.t3.astype(bool)].astype(bool), " · T3", " · T3 exp.")
 
     def color(row):
         r = view.loc[row.name]
-        if r.plus_ev:
-            bg = "rgba(34,197,94,0.10)"
-        else:
-            bg = "rgba(0,0,0,0)"
-        return [f"background-color: {bg}"] * len(row)
+        bg = "background-color: rgba(255,122,26,0.08);" if r.plus_ev else ""
+        out = []
+        for c in row.index:
+            x = bg
+            if c == "side":
+                x += f"color: {'#22c55e' if r.side == 'over' else '#ef4444'};"
+            elif c in ("edge", "ev") and row[c] == row[c]:
+                x += f"color: {'#86efac' if row[c] > 0 else '#7b8794'};"
+            elif c == "tier":
+                x += {"A": "color: #ff7a1a;", "B": "color: #bcd3ea;"}.get(r.tier, "color: #7b8794;")
+            elif c == "ml_fit":
+                x += {"supports": "color: #86efac;", "against": "color: #fca5a5;"}.get(r.ml_fit, "color: #7b8794;")
+            elif c in ("chg", "n_maps", "source", "why"):
+                x += "color: #9aa7b6;"
+            out.append(x)
+        return out
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"}, na_rep="")
@@ -1494,7 +1513,13 @@ with tab_slate:
                      "stat": st.column_config.Column("Stat", width=85), "line": st.column_config.Column("Line", width=60),
                      "mean": st.column_config.Column("Mean", width=60, help="Mean of the model's predictive distribution"),
                      "p_over": st.column_config.Column("P(over)", width=75), "p_under": st.column_config.Column("P(under)", width=80),
-                     "side": st.column_config.Column("Side", width=80), "edge": st.column_config.Column("Edge", width=70, help=HELP["edge"]),
+                     "side": st.column_config.Column("Side", width=80),
+                     "ml": st.column_config.Column("Team ML", width=105, help="Pre-match series win probability of the player's team "
+                                                   "(no-vig book or market price) and its fair American odds. Blank when no "
+                                                   "pre-start book snapshot exists. Informational only, not used by the model."),
+                     "ml_fit": st.column_config.Column("ML lean", width=100, help="Whether the moneyline leans the same way as the "
+                                                       "pick: favourite = over, underdog = under, 45 to 55% = neutral. A simple "
+                                                       "heuristic for context, not a model input or filter."), "edge": st.column_config.Column("Edge", width=70, help=HELP["edge"]),
                      "ev": st.column_config.Column("EV", width=70, help=HELP["ev"]), "tier": st.column_config.Column("Conf", width=50, help=HELP["tier"]),
                      "n_maps": st.column_config.Column("Maps n", width=65, help="Prior maps in the player's history"),
                      "source": st.column_config.Column("Platform", width=90), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
