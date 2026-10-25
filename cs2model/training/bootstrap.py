@@ -20,7 +20,14 @@ import pandas as pd
 from ..backtest import metrics as M
 from ..features.build import build_features
 from ..parlay.engine import load_yaml
-from ..scraper.bo3_history import DATA, HIST_PATH, crawl, merge_history, save_history
+from ..scraper.bo3_history import (
+    DATA,
+    HIST_PATH,
+    crawl,
+    merge_history,
+    read_history,
+    save_history,
+)
 from .train import MIN_HISTORY, MODEL_DIR, rate, row_pmfs, shrunk_rate, train
 
 COVERAGE_PATH = DATA / "coverage.json"
@@ -81,7 +88,7 @@ def quick_start(settings=None, progress=None):
     settings = settings or load_yaml("settings.yaml")
     days = int(settings.get("quickstart_days", 45))
     write_coverage(complete=False, target_days=int(settings["history_days"]), quickstart_days=days, phase="quick start")
-    old = pd.read_csv(HIST_PATH) if HIST_PATH.exists() else None
+    old = read_history() if HIST_PATH.exists() else None
     df = crawl(days, tiers=_tiers(settings), write=False, progress=progress, known=old)
     df = merge_history(old, df) if old is not None else df
     if df.empty:
@@ -97,7 +104,7 @@ def backfill(settings=None, state=None):
     settings = settings or load_yaml("settings.yaml")
     state = state if state is not None else {}
     n = int(settings["history_days"])
-    old = pd.read_csv(HIST_PATH) if HIST_PATH.exists() else None
+    old = read_history() if HIST_PATH.exists() else None
     state.update(phase="downloading", day=0, n=n + 1, rows=0)
     write_coverage(phase="backfill", backfill_started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     df = crawl(n, tiers=_tiers(settings), write=False, known=old,

@@ -24,6 +24,27 @@ HIST_PATH = DATA / "player_maps.csv"
 log = logging.getLogger(__name__)
 
 PAST = None  # finished matches/maps never change -> cache forever
+ID_COLS = ("match_id", "game_id", "team_id", "opp_id", "player_id", "tournament_id")
+
+
+def coerce_ids(df: pd.DataFrame) -> pd.DataFrame:
+    """Whole-number ID columns: int64, or nullable Int64 when an ID is missing (kept missing, never 0). Without this a
+    single None in an update turns the whole column into floats, the CSV is written as 23237.0 and player lookups that
+    key on str(id) fail."""
+    for c in ID_COLS:
+        if c not in df.columns or pd.api.types.is_integer_dtype(df[c]):
+            continue
+        s = pd.to_numeric(df[c], errors="coerce")
+        bad = s.isna() & df[c].notna()
+        if bad.any():
+            log.warning("%s: %d non-numeric IDs treated as missing", c, int(bad.sum()))
+        s = s.astype("Int64")
+        df[c] = s.astype("int64") if s.notna().all() else s
+    return df
+
+
+def read_history(path=None) -> pd.DataFrame:
+    return coerce_ids(pd.read_csv(path or HIST_PATH, low_memory=False))
 
 
 def finished_matches(day: date):
@@ -179,12 +200,12 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, p
         log.info("%s: %d matches, +%d rows (total %d)", day, len(matches), len(rows) - n0, len(rows))
         if progress:
             progress(days + 1 - i, days + 1, len(rows))
-    df = pd.DataFrame(rows)
+    df = coerce_ids(pd.DataFrame(rows))
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601")
         df = df.drop_duplicates(["game_id", "player_id"]).sort_values(["date", "game_id"])
     if write:
-        df = merge_history(pd.read_csv(HIST_PATH, low_memory=False) if HIST_PATH.exists() else None, df)
+        df = merge_history(read_history() if HIST_PATH.exists() else None, df)
         if keep_days is not None and not df.empty:
             df = df[df["date"] >= pd.Timestamp(end - timedelta(days=keep_days), tz="UTC")].reset_index(drop=True)
         save_history(df)
@@ -211,7 +232,8 @@ def merge_history(*frames: pd.DataFrame) -> pd.DataFrame:
     frames = [f for f in frames if f is not None and not f.empty]
     if not frames:
         return pd.DataFrame()
-    df = pd.concat([f.assign(date=pd.to_datetime(f["date"], utc=True, format="ISO8601")) for f in frames], ignore_index=True)
+    df = coerce_ids(pd.concat([coerce_ids(f.assign(date=pd.to_datetime(f["date"], utc=True, format="ISO8601")))
+                               for f in frames], ignore_index=True))
     df = df.assign(_nn=df.notna().sum(1)).sort_values("_nn", kind="stable")
     df = df.drop_duplicates(["game_id", "player_id"], keep="last").drop(columns="_nn")
     return df.sort_values(["date", "game_id"]).reset_index(drop=True)
@@ -221,7 +243,7 @@ def save_history(df):
     """Write via a temp file + rename so readers never see a half-written CSV."""
     DATA.mkdir(exist_ok=True)
     tmp = HIST_PATH.with_suffix(".tmp")
-    df.to_csv(tmp, index=False)
+    coerce_ids(df.copy()).to_csv(tmp, index=False)
     os.replace(tmp, HIST_PATH)
 
 
