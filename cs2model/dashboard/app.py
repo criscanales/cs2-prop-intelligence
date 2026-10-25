@@ -1472,8 +1472,8 @@ with tab_slate:
     _pw = _pw.where(_ok)
     view = view.assign(ml=[f"{p:.0%} · {american(p)}" if p == p else "" for p in _pw],
                        ml_fit=[ml_support(sd, p) for sd, p in zip(view.side, _pw)])
-    cols = ["chg", "logo", "player", "team", "opponent", "start", "maps_label", "stat", "line", "model_mean", "p_over", "p_under", "side",
-            "ml", "ml_fit", "edge", "ev", "tier", "n_maps", "source", "why"]
+    cols = ["chg", "logo", "player", "team", "opponent", "start", "maps_label", "stat", "line", "side", "edge", "ml", "ml_fit",
+            "model_mean", "p_over", "p_under", "ev", "tier", "n_maps", "source", "why"]
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"maps_label": "maps", "model_mean": "mean"})
     t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
     t["ml_fit"] = t.ml_fit.map({"supports": "✓ supports", "against": "✗ against", "neutral": "· neutral"}).fillna("")
@@ -1506,8 +1506,8 @@ with tab_slate:
                  column_config={
                      "chg": st.column_config.Column("Chg", width=70, help="NEW = line added, a→b = line moved since last update"),
                      "logo": st.column_config.ImageColumn("", width=36),
-                     "player": st.column_config.Column("Player", width=110), "team": st.column_config.Column("Team", width=140),
-                     "opponent": st.column_config.Column("Opponent", width=140),
+                     "player": st.column_config.Column("Player", width=110), "team": st.column_config.Column("Team", width=120),
+                     "opponent": st.column_config.Column("Opponent", width=120),
                      "start": st.column_config.DatetimeColumn("Start (ET)", width=150, format="ddd D MMM, h:mm A", timezone=TZ, help="Match start time, US Eastern (EST/EDT)"),
                      "maps": st.column_config.Column("Maps", width=80),
                      "stat": st.column_config.Column("Stat", width=85), "line": st.column_config.Column("Line", width=60),
