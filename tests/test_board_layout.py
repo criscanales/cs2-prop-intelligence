@@ -39,3 +39,8 @@ def test_stale_selection_after_filtering_is_ignored():
 
 def test_missing_logo_renders_blank_not_none():
     assert 'LOGOS.get(int(t)) or ""' in BOARD
+
+
+def test_team_ml_shows_percentage_only():
+    assert 'ml=[f"{p:.0%}" if p == p else "" for p in _pw]' in BOARD
+    assert "american(p)" not in BOARD
