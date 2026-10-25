@@ -86,6 +86,16 @@ def prematch_odds_ok(odds_source, odds_at, start_time):
     return not (pd.isna(at) or pd.isna(st)) and at < st
 
 
+def ml_support(side, p_team_series, neutral=0.05):
+    """Informational only: does the team's pre-match series moneyline lean the same way as the prop side
+    (favourite -> over, underdog -> under)? "neutral" within `neutral` of 50%, "" without usable odds."""
+    if p_team_series is None or p_team_series != p_team_series or side not in ("over", "under"):
+        return ""
+    if abs(p_team_series - 0.5) < neutral:
+        return "neutral"
+    return "supports" if (p_team_series > 0.5) == (side == "over") else "against"
+
+
 def stake_cap(settings, payouts, platform):
     ok = payouts.get(platform, {}).get("verified", False)
     return settings["max_stake_pct"] if ok else min(settings["max_stake_pct"], settings.get("unverified_max_stake_pct", 0.005))
