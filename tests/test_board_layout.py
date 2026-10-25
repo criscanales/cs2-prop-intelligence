@@ -44,3 +44,7 @@ def test_missing_logo_renders_blank_not_none():
 def test_team_ml_shows_percentage_only():
     assert 'ml=[f"{p:.0%}" if p == p else "" for p in _pw]' in BOARD
     assert "american(p)" not in BOARD
+
+
+def test_team_ml_is_compact_and_right_aligned():
+    assert '"ml": st.column_config.Column("Team ML", width=68, alignment="right",' in BOARD
