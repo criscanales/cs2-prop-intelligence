@@ -1470,7 +1470,7 @@ with tab_slate:
            zip(_pw, view.get("series_src", pd.Series(None, index=view.index)), view.odds_source,
                view.get("odds_at", pd.Series(None, index=view.index)), view.start_time)]
     _pw = _pw.where(_ok)
-    view = view.assign(ml=[f"{p:.0%} · {american(p)}" if p == p else "" for p in _pw],
+    view = view.assign(ml=[f"{p:.0%}" if p == p else "" for p in _pw],
                        ml_fit=[ml_support(sd, p) for sd, p in zip(view.side, _pw)])
     view = view.assign(matchup=view.team.astype(str) + " vs " + view.opponent.astype(str),
                        prop=view.stat.astype(str).str.capitalize() + " · " + view.maps_label.astype(str))
@@ -1518,8 +1518,8 @@ with tab_slate:
                      "prop": st.column_config.Column("Prop", width=150), "line": st.column_config.Column("Line", width=60),
                      "side": st.column_config.Column("Side", width=85),
                      "edge": st.column_config.Column("Edge", width=75, help=HELP["edge"]),
-                     "ml": st.column_config.Column("Team ML", width=125, help="Pre-match series win probability of the player's team "
-                                                   "(no-vig book or market price) and its fair American odds. ✓ = the moneyline "
+                     "ml": st.column_config.Column("Team ML", width=68, alignment="right", help="Pre-match series win probability of the player's team "
+                                                   "(no-vig book or market price). ✓ = the moneyline "
                                                    "leans the same way as the pick (favourite for over, underdog for under; 45 to "
                                                    "55% counts as neutral). Blank when no pre-start book snapshot exists. "
                                                    "Informational only, not used by the model."),
