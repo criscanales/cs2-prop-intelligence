@@ -21,7 +21,7 @@ from ..features.build import build_features
 from ..maps.pool import MapModel, anchored
 from ..names import norm_player, team_similarity
 from ..parlay.engine import load_yaml, single_breakeven
-from ..scraper.bo3_history import HIST_PATH
+from ..scraper.bo3_history import coerce_ids, read_history
 from ..training.train import MODEL_DIR, shrunk_rate
 from ..training.tier3 import T3_TIERS
 from . import analytic as A
@@ -145,7 +145,7 @@ def team_map_counts(h: pd.DataFrame, tiers, days: float) -> pd.Series:
 
 class Predictor:
     def __init__(self, hist: pd.DataFrame | None = None, models: Models | None = None, settings=None, payouts=None):
-        self.hist = hist if hist is not None else pd.read_csv(HIST_PATH)
+        self.hist = coerce_ids(hist) if hist is not None else read_history()
         self.hist["date"] = pd.to_datetime(self.hist["date"], utc=True, format="ISO8601")
         self.m = models or Models.load()
         self.settings = settings or load_yaml("settings.yaml")

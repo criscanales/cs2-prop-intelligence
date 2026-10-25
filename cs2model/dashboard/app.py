@@ -466,8 +466,8 @@ def start_results_update(u):
 
     def work():
         try:
-            from cs2model.scraper.bo3_history import crawl, save_history
-            old_df = pd.read_csv(HIST_PATH) if HIST_PATH.exists() else None
+            from cs2model.scraper.bo3_history import crawl, read_history, save_history
+            old_df = read_history() if HIST_PATH.exists() else None
             old = 0 if old_df is None else len(old_df)
             df = crawl(settings["history_days"], tiers=tuple(settings.get("history_tiers", settings["tiers"])), write=False,
                        known=old_df)

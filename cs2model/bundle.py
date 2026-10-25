@@ -17,7 +17,13 @@ import numpy as np
 import pandas as pd
 
 from .features.build import AWP_PATH, FEATURES
-from .scraper.bo3_history import DATA, HIST_PATH, merge_history, save_history
+from .scraper.bo3_history import (
+    DATA,
+    HIST_PATH,
+    merge_history,
+    read_history,
+    save_history,
+)
 from .scraper.http import ROOT
 from .training import bootstrap as B
 from .training.calibration import Platt
@@ -185,7 +191,7 @@ def import_bundle(src, replace_models: bool = False) -> dict:
         had_model = (MODEL_DIR / "artifacts.json").exists()
         install = why_not is None and (not had_model or replace_models)
         local_complete = B.is_complete() if HIST_PATH.exists() else False
-        old = pd.read_csv(HIST_PATH) if HIST_PATH.exists() else None
+        old = read_history() if HIST_PATH.exists() else None
         merged = merge_history(old, new)
         n_old = 0 if old is None else len(old)
         save_history(merged)
