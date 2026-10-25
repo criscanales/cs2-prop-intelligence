@@ -1483,9 +1483,11 @@ with tab_slate:
         t3v = view.loc[t.index]
         t.loc[t3v.t3.astype(bool), "player"] += np.where(t3v.t3_validated[t3v.t3.astype(bool)].astype(bool), " · T3", " · T3 exp.")
 
+    pos = {k: i for i, k in enumerate(t.index)}
+
     def color(row):
         r = view.loc[row.name]
-        bg = "background-color: rgba(255,122,26,0.08);" if r.plus_ev else ""
+        bg = f"background-color: {'#151b23' if pos[row.name] % 2 else '#11161d'};"
         out = []
         for c in row.index:
             x = bg
@@ -1493,8 +1495,10 @@ with tab_slate:
                 x += "color: #f5f7fa; font-weight: 700;"
             elif c == "side":
                 x += f"color: {'#22c55e' if r.side == 'over' else '#ef4444'};"
-            elif c in ("edge", "ev") and row[c] == row[c]:
+            elif c == "edge" and row[c] == row[c]:
                 x += f"color: {'#86efac' if row[c] > 0 else '#7b8794'};"
+            elif c == "ev" and row[c] == row[c]:
+                x += f"color: {'#7fa68e' if row[c] > 0 else '#7b8794'};"
             elif c == "tier":
                 x += {"A": "color: #ff7a1a;", "B": "color: #bcd3ea;"}.get(r.tier, "color: #7b8794;")
             elif c == "ml":
@@ -1506,7 +1510,7 @@ with tab_slate:
 
     sty = t.style.apply(color, axis=1).format({"line": "{:.1f}", "mean": "{:.1f}", "p_over": "{:.1%}", "p_under": "{:.1%}",
                                               "edge": "{:+.1%}", "ev": "{:+.1%}"}, na_rep="")
-    sel = st.dataframe(sty, width="stretch", height=720, hide_index=True, on_select="rerun", selection_mode="single-row", key="board",
+    sel = st.dataframe(sty, width="stretch", height=720, row_height=38, hide_index=True, on_select="rerun", selection_mode="single-row", key="board",
                  column_config={
                      "logo": st.column_config.ImageColumn("", width=40),
                      "player": st.column_config.Column("Player", width=130),
@@ -1533,7 +1537,7 @@ with tab_slate:
         st.session_state.board_open = k
         player_dialog(k)
     st.markdown('<div class="sect">Actions</div>', unsafe_allow_html=True)
-    st.caption("Highlighted rows = +EV (passes all rules) · ▲ over / ▼ under · click a header to sort, click a row to open the player panel. Edge = model P(side) − platform breakeven.")
+    st.caption("+EV rows (pass all rules) show a confidence tier in Conf · ▲ over / ▼ under · click a header to sort, click a row to open the player panel. Edge = model P(side) − platform breakeven.")
     d1, d2 = st.columns(2)
     picks = slate[slate.plus_ev]
     d1.download_button("Export +EV picks (CSV)", picks.drop(columns=["maps"]).to_csv(index=False), "cs2_picks.csv")
