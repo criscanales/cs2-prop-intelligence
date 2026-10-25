@@ -16,6 +16,7 @@ workers: 0              # pricing worker processes; 0 = auto (min(4, cores-1)), 
 parallel_min_jobs: 3    # only use workers when at least this many matches need work
 kelly_fraction: 0.25
 bankroll: 1000
+dashboard_bankroll: 100   # dashboard's starting bankroll; CLI slate keeps `bankroll`
 max_stake_pct: 0.03
 auto_refresh_sec: 120         # dashboard checks for new/moved/pulled lines this often
 results_refresh_min: 60       # dashboard pulls newly finished bo3.gg matches into history this often (min 15)

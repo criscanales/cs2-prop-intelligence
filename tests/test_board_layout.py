@@ -48,3 +48,10 @@ def test_team_ml_shows_percentage_only():
 
 def test_team_ml_is_compact_and_right_aligned():
     assert '"ml": st.column_config.Column("Team ML", width=68, alignment="right",' in BOARD
+
+
+def test_dashboard_bankroll_defaults_separately_from_cli():
+    import yaml
+    cfg = yaml.safe_load((Path(__file__).parents[1] / "config" / "settings.yaml").read_text())
+    assert cfg["bankroll"] == 1000 and cfg["dashboard_bankroll"] == 100
+    assert 'float(settings.get("dashboard_bankroll", settings["bankroll"]))' in SRC
