@@ -1518,7 +1518,7 @@ with tab_slate:
                      "prop": st.column_config.Column("Prop", width=150), "line": st.column_config.Column("Line", width=60),
                      "side": st.column_config.Column("Side", width=85),
                      "edge": st.column_config.Column("Edge", width=75, help=HELP["edge"]),
-                     "ml": st.column_config.Column("Team ML", width=85, help="Pre-match series win probability of the player's team "
+                     "ml": st.column_config.Column("Team ML", width=68, help="Pre-match series win probability of the player's team "
                                                    "(no-vig book or market price). ✓ = the moneyline "
                                                    "leans the same way as the pick (favourite for over, underdog for under; 45 to "
                                                    "55% counts as neutral). Blank when no pre-start book snapshot exists. "
