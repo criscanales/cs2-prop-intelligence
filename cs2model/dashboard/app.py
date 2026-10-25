@@ -788,7 +788,7 @@ with st.sidebar:
                            help="A/B/C = confidence in a +EV pick (sample size, tenure, edge, sharp odds). '-' = not a bet.")
     q = st.text_input("Search player / team")
     st.markdown('<div class="sb-h">Bankroll</div>', unsafe_allow_html=True)
-    settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings["bankroll"]), 50.0)
+    settings["bankroll"] = st.number_input("Bankroll", 10.0, 1e7, float(settings.get("dashboard_bankroll", settings["bankroll"])), 50.0)
     settings["kelly_fraction"] = st.slider("Kelly fraction", 0.05, 1.0, float(settings["kelly_fraction"]), 0.05)
     settings["daily_exposure_pct"] = st.slider("Daily max exposure", 0.01, 0.5, float(settings["daily_exposure_pct"]), 0.01)
 
