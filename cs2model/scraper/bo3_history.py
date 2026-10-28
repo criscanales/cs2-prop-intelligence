@@ -8,13 +8,21 @@ Endpoints (all public, discovered from the bo3.gg web app):
   /api/v1/players/{slug}/general_stats          career totals (all tiers and dates)
 """
 import argparse
-import os
 import json
 import logging
+import os
+import tempfile
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import quote
 
 import pandas as pd
+
+try:
+    import fcntl
+except ImportError:  # Windows desktop build: unique temp files still keep writers from interleaving
+    fcntl = None
 
 from .http import CACHE_DIR, ROOT, fetch_json
 
@@ -205,10 +213,11 @@ def crawl(days=92, end: date | None = None, tiers=("s", "a", "b"), write=True, p
         df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601")
         df = df.drop_duplicates(["game_id", "player_id"]).sort_values(["date", "game_id"])
     if write:
-        df = merge_history(read_history() if HIST_PATH.exists() else None, df)
-        if keep_days is not None and not df.empty:
-            df = df[df["date"] >= pd.Timestamp(end - timedelta(days=keep_days), tz="UTC")].reset_index(drop=True)
-        save_history(df)
+        with history_lock():
+            df = merge_history(read_history() if HIST_PATH.exists() else None, df)
+            if keep_days is not None and not df.empty:
+                df = df[df["date"] >= pd.Timestamp(end - timedelta(days=keep_days), tz="UTC")].reset_index(drop=True)
+            _write_history(df)
     return df
 
 
@@ -239,12 +248,36 @@ def merge_history(*frames: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(["date", "game_id"]).reset_index(drop=True)
 
 
+@contextmanager
+def history_lock():
+    """Exclusive lock shared by every history writer (CLI refresh loop, dashboard auto-pull)."""
+    HIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(HIST_PATH.with_suffix(".lock"), "a") as f:
+        if fcntl:
+            fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _write_history(df):
+    """Unique temp file + rename: concurrent writers can't interleave rows and readers never see a half-written CSV."""
+    fd, tmp = tempfile.mkstemp(dir=HIST_PATH.parent, prefix=HIST_PATH.stem + ".", suffix=".tmp")
+    os.close(fd)
+    try:
+        coerce_ids(df.copy()).to_csv(tmp, index=False)
+        os.replace(tmp, HIST_PATH)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def save_history(df):
-    """Write via a temp file + rename so readers never see a half-written CSV."""
     DATA.mkdir(exist_ok=True)
-    tmp = HIST_PATH.with_suffix(".tmp")
-    coerce_ids(df.copy()).to_csv(tmp, index=False)
-    os.replace(tmp, HIST_PATH)
+    with history_lock():
+        _write_history(df)
 
 
 if __name__ == "__main__":

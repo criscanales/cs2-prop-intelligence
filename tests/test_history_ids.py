@@ -102,3 +102,24 @@ def test_merge_history_float_and_int_frames_gives_int_ids():
 def test_coerce_ids_rejects_fractional_ids():
     with pytest.raises(TypeError):
         b.coerce_ids(pd.DataFrame({"player_id": [1.0, 2.5]}))
+
+
+def test_concurrent_saves_never_interleave(disk):
+    """Refresh loop and dashboard auto-pull saving at once corrupted player_maps.csv (Oct 28: 62 fields on one row)."""
+    import threading
+    small, big = _hist(), pd.concat([_hist()] * 3000, ignore_index=True)
+    errs = []
+
+    def writer(df):
+        try:
+            for _ in range(5):
+                b.save_history(df)
+        except Exception as e:  # noqa: BLE001
+            errs.append(e)
+
+    ts = [threading.Thread(target=writer, args=(d,)) for d in (big, small, big, small)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert not errs
+    assert len(b.read_history()) in (len(small), len(big))
+    assert [p.name for p in disk.parent.iterdir() if p.suffix == ".tmp"] == []
