@@ -24,7 +24,7 @@ unverified_max_stake_pct: 0.005   # stake cap while payouts.yaml has verified: f
 daily_exposure_pct: 0.15  # all slips per day, of bankroll
 max_legs_per_match: 2
 top_n_slips: 10
-retrain_days: 7             # app retrains the models in the background once they are this many days old
+retrain_days: 36500         # automatic retraining paused during the confirmation study (normally 7); resume only with Cris's approval
 demon_lower_tier: false     # also price PrizePicks demons for teams below min_team_maps (sidebar toggle)
 demon_min_team_maps: 4      # ...as long as each team has at least this many tier-1/2 maps
 price_tier3: false          # also price lines for teams short on tier-1/2 maps as tier 3 (sidebar toggle)
