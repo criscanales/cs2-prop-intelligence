@@ -123,3 +123,9 @@ def test_concurrent_saves_never_interleave(disk):
     assert not errs
     assert len(b.read_history()) in (len(small), len(big))
     assert [p.name for p in disk.parent.iterdir() if p.suffix == ".tmp"] == []
+
+
+def test_saved_history_is_0644(disk):
+    import stat
+    b.save_history(_hist())
+    assert stat.S_IMODE(disk.stat().st_mode) == 0o644
