@@ -125,12 +125,7 @@ def test_concurrent_saves_never_interleave(disk):
     assert [p.name for p in disk.parent.iterdir() if p.suffix == ".tmp"] == []
 
 
-def test_saved_history_keeps_default_file_mode(disk):
-    import os
+def test_saved_history_is_0644(disk):
     import stat
-    umask = os.umask(0o022)
-    try:
-        b.save_history(_hist())
-    finally:
-        os.umask(umask)
+    b.save_history(_hist())
     assert stat.S_IMODE(disk.stat().st_mode) == 0o644

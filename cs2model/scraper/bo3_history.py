@@ -29,6 +29,7 @@ from .http import CACHE_DIR, ROOT, fetch_json
 API = "https://api.bo3.gg/api"
 DATA = ROOT / "data"
 HIST_PATH = DATA / "player_maps.csv"
+HIST_MODE = 0o644
 log = logging.getLogger(__name__)
 
 PAST = None  # finished matches/maps never change -> cache forever
@@ -267,9 +268,7 @@ def _write_history(df):
     fd, tmp = tempfile.mkstemp(dir=HIST_PATH.parent, prefix=HIST_PATH.stem + ".", suffix=".tmp")
     os.close(fd)
     try:
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)  # mkstemp creates 0600; keep the mode a plain write would give
+        os.chmod(tmp, HIST_MODE)  # mkstemp creates 0600
         coerce_ids(df.copy()).to_csv(tmp, index=False)
         os.replace(tmp, HIST_PATH)
     except BaseException:
