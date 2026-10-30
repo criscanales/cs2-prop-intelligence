@@ -267,6 +267,9 @@ def _write_history(df):
     fd, tmp = tempfile.mkstemp(dir=HIST_PATH.parent, prefix=HIST_PATH.stem + ".", suffix=".tmp")
     os.close(fd)
     try:
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)  # mkstemp creates 0600; keep the mode a plain write would give
         coerce_ids(df.copy()).to_csv(tmp, index=False)
         os.replace(tmp, HIST_PATH)
     except BaseException:
