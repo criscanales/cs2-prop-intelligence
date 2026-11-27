@@ -207,6 +207,10 @@ def _log_shadow(con, rows, extra):
         e_o = min(1.0, p / live) - be_o if be_o == be_o else None
         e_u = min(1.0, max(0.0, 1 - p - (p_push if p_push == p_push else 0)) / live) - be_u if be_u == be_u else None
         out.append((x[0], x[1], x[4], x[5], x[6], x[7], x[8], x[10], p, e_o, e_u, version, x[-2], x[-1]))
+    # an uncertain quote only counts when it is the production row that was kept, so both rows describe the same price
+    kept = {x[:2] + x[4:7]: con.execute("SELECT ts, line FROM preds WHERE source=? AND player=? AND stat=? AND maps=? AND "
+                                        "start_time=?", x[:2] + x[4:7]).fetchone() for x in rows if x[-1] != "scheduled"}
+    out = [x for x in out if x[-1] == "scheduled" or kept.get(x[:2] + x[2:5]) == (x[5], x[6])]
     q = ("INTO shadow_preds (source, player, stat, maps, start_time, ts, line, p_over_prod, p_over, edge_over, edge_under, "
          "version, match_id, prematch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     con.executemany("INSERT OR REPLACE " + q, [x for x in out if x[-1] == "scheduled"])
