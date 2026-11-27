@@ -2,16 +2,18 @@
 start so it can be checked on new matches. It never feeds picks, edges, tiers or the board."""
 import hashlib
 import json
+from pathlib import Path
 
 from ..scraper.http import ROOT
 from ..training.calibration import Platt
 
 PATH = ROOT / "config" / "shadow_calibration.json"
+BUNDLED = Path(__file__).resolve().parents[2] / "config" / "shadow_calibration.json"  # desktop CS2_HOME copies only YAML
 
 
 def load(path=None):
     """(version tag, {market key: Platt}) or None when no shadow calibration is configured."""
-    path = path or PATH
+    path = path or (PATH if PATH.exists() else BUNDLED)
     if not path.exists():
         return None
     raw = path.read_bytes()

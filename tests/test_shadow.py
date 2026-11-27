@@ -14,6 +14,31 @@ def _cal(tmp_path, monkeypatch):
     monkeypatch.setattr(shadow, "PATH", p)
 
 
+def _off(tmp_path, monkeypatch):
+    monkeypatch.setattr(shadow, "PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(shadow, "BUNDLED", tmp_path / "missing.json")
+
+
+def test_uncertain_quote_only_shadowed_when_production_kept_it(tmp_path, monkeypatch):
+    con = store.connect(tmp_path / "t.db")
+    now = pd.Timestamp.now(tz="UTC")
+    stale = {frozenset((1, 2)): {"match_id": 7, "status": "upcoming", "started": False,
+                                 "scheduled": (now - pd.Timedelta(minutes=20)).isoformat()}}
+    bst = now + pd.Timedelta(hours=1)
+    _off(tmp_path, monkeypatch)
+    store.log_preds(_row(bst), con, status=UP)  # production price logged before the shadow file existed
+    _cal(tmp_path, monkeypatch)
+    store.log_preds(_row(bst, line=12.5), con, status=stale)  # rejected by preds, so no shadow row either
+    assert con.execute("SELECT count(*) FROM shadow_preds").fetchone()[0] == 0
+    store.log_preds(_row(bst + pd.Timedelta(minutes=30)), con, status=stale)  # new key: preds keeps it, shadow too
+    assert con.execute("SELECT line, prematch FROM shadow_preds").fetchall() == [(13.5, "uncertain")]
+
+
+def test_desktop_home_without_config_falls_back_to_bundled(tmp_path, monkeypatch):
+    monkeypatch.setattr(shadow, "PATH", tmp_path / "config" / "shadow_calibration.json")
+    assert shadow.load()[0].startswith("recal-v1:")
+
+
 def test_shadow_logged_beside_production_and_prod_unchanged(tmp_path, monkeypatch):
     _cal(tmp_path, monkeypatch)
     con = store.connect(tmp_path / "t.db")
@@ -36,7 +61,7 @@ def test_shadow_skips_started_t3_and_unconfigured(tmp_path, monkeypatch):
     store.log_preds(_row(bst, t3=True), con, status=UP)
     store.log_preds(_row(bst, stat="headshots"), con, status=UP)  # no calibrator for this market
     assert con.execute("SELECT count(*) FROM shadow_preds").fetchone()[0] == 0
-    monkeypatch.setattr(shadow, "PATH", tmp_path / "missing.json")
+    _off(tmp_path, monkeypatch)
     store.log_preds(_row(bst, player="p11"), con, status=UP)
     assert con.execute("SELECT count(*) FROM shadow_preds").fetchone()[0] == 0
 
