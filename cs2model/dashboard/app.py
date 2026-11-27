@@ -663,6 +663,18 @@ T3X_HELP = ("Model probability minus breakeven on a tier-3 line. The tier-3 cali
             "so a positive difference does not qualify the pick (no confidence rating, never +EV).")
 
 
+UD_BETTER_HELP = ("Same prop (player, stat, maps, match) is on both apps. In the 100-match confirmation test, Underdog beat "
+                  "PrizePicks by 7.6 ROI points on 366 paired props, so ★ marks the Underdog copy.")
+
+
+def on_both_apps(df):
+    """True where the same player/stat/maps/match prop is also offered on the other platform."""
+    if df.empty:
+        return pd.Series(False, index=df.index)
+    k = df.player.astype(str) + "|" + df.stat.astype(str) + "|" + df.maps.map(lambda m: "+".join(map(str, m))) + "|" + df.start_time.astype(str)
+    return df.groupby(k).source.transform("nunique").gt(1)
+
+
 def t3_experimental(r):
     return bool(getattr(r, "t3", False)) and not bool(getattr(r, "t3_validated", False))
 
@@ -671,6 +683,9 @@ def play_card(r, help_edge="", help_tier=""):
     over = r.side == "over"
     t3x = t3_experimental(r)
     plat = '<span class="badge b-pp">PrizePicks</span>' if r.source == "prizepicks" else '<span class="badge b-ud">Underdog</span>'
+    if bool(getattr(r, "both", False)):
+        plat += (f'<span class="badge b-ud" title="{UD_BETTER_HELP}">★ Better on UD</span>' if r.source == "underdog" else
+                 f'<span class="badge b-new" title="{UD_BETTER_HELP}">Also on UD</span>')
     ot = getattr(r, "odds_type", "standard")
     if isinstance(ot, str) and ot != "standard":
         plat += (f'<span class="badge b-new" title="PrizePicks {ot} line (over only). Priced at the standard payout unless '
@@ -833,7 +848,8 @@ def change_tag(r):
 
 
 slate["chg"] = slate.apply(change_tag, axis=1) if len(slate) else ""
-view = view.assign(chg=slate.loc[view.index, "chg"])
+slate["both"] = on_both_apps(slate)
+view = view.assign(chg=slate.loc[view.index, "chg"], both=slate.loc[view.index, "both"])
 live_cls, live_txt = ("live", f"Live · auto-updates every {every // 60} min") if auto else ("live off", "Auto-update off")
 
 
@@ -1479,6 +1495,8 @@ with tab_slate:
     t = view.sort_values("edge", ascending=False)[cols].rename(columns={"model_mean": "mean"})
     t["side"] = t.side.map({"over": "▲ over", "under": "▼ under"}).fillna(t.side)
     t["ml"] = np.where(view.loc[t.index, "ml_fit"].eq("supports") & t.ml.ne(""), "✓ " + t.ml, t.ml)
+    _both = view.loc[t.index, "both"].astype(bool)
+    t["source"] = np.where(_both & t.source.eq("underdog"), "★ underdog", np.where(_both, t.source + " · UD too", t.source))
     if "t3" in view:
         t3v = view.loc[t.index]
         t.loc[t3v.t3.astype(bool), "player"] += np.where(t3v.t3_validated[t3v.t3.astype(bool)].astype(bool), " · T3", " · T3 exp.")
@@ -1528,7 +1546,7 @@ with tab_slate:
                      "p_over": st.column_config.Column("P(over)", width=75), "p_under": st.column_config.Column("P(under)", width=80),
                      "start": st.column_config.DatetimeColumn("Start (ET)", width=150, format="ddd D MMM, h:mm A", timezone=TZ, help="Match start time, US Eastern (EST/EDT)"),
                      "n_maps": st.column_config.Column("Maps n", width=65, help="Prior maps in the player's history"),
-                     "source": st.column_config.Column("Platform", width=90), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
+                     "source": st.column_config.Column("Platform", width=130, help=UD_BETTER_HELP), "why": st.column_config.Column("Why", help=HELP["why"], width=420)})
     rows = sel.selection.rows if sel is not None else []
     k = t.index[rows[0]] if rows and rows[0] < len(t) else None
     if k is None:
