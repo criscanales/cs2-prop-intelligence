@@ -1,0 +1,22 @@
+{
+ "note": "Shadow only: never used for picks, edges or the board. Second Platt layer on the production calibrated P(over) (model a9b84e48b269), fit on graded tier 1/2 tracking preds through 2026-11-27 (6831 lines).",
+ "params": {
+  "headshots_map": {
+   "coef": 0.5639691165454688,
+   "intercept": -0.15204086154591406
+  },
+  "headshots_series": {
+   "coef": 0.453759044960484,
+   "intercept": 0.048602301609956586
+  },
+  "kills_map": {
+   "coef": 0.3038866287359353,
+   "intercept": -0.23332281901693225
+  },
+  "kills_series": {
+   "coef": 0.350632206984611,
+   "intercept": 0.04025133623496233
+  }
+ },
+ "version": "recal-v1"
+}
