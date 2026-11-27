@@ -668,10 +668,14 @@ UD_BETTER_HELP = ("Same prop (player, stat, maps, match) is on both apps. In the
 
 
 def on_both_apps(df):
-    """True where the same player/stat/maps/match prop is also offered on the other platform."""
+    """True where the same player/stat/maps/match prop is also offered on the other platform. Keyed on the resolved
+    player id and match when priced, since the feeds can spell names and list start times differently."""
     if df.empty:
         return pd.Series(False, index=df.index)
-    k = df.player.astype(str) + "|" + df.stat.astype(str) + "|" + df.maps.map(lambda m: "+".join(map(str, m))) + "|" + df.start_time.astype(str)
+    who = df.player_id.astype(str) if "player_id" in df else df.player.astype(str).str.lower()
+    when = (df.match.astype(str) if "match" in df else
+            pd.to_datetime(df.start_time, utc=True, format="ISO8601").dt.strftime("%Y-%m-%dT%H:%M"))
+    k = who + "|" + df.stat.astype(str) + "|" + df.maps.map(lambda m: "+".join(map(str, m))) + "|" + when
     return df.groupby(k).source.transform("nunique").gt(1)
 
 

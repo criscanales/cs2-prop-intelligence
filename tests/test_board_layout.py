@@ -68,4 +68,11 @@ def test_on_both_apps_marks_only_props_offered_on_both_platforms():
                        "start_time": [st, st, st, st]})
     assert ns["on_both_apps"](df).tolist() == [True, True, False, False]
     assert ns["on_both_apps"](df.iloc[:0]).tolist() == []
+    # priced slates: resolved player id + match key win over feed spellings and start-time formats
+    df2 = df.assign(player=["Aa", "aa ", "b", "Aa"], player_id=[1, 1, 2, 1], match=["m", "m", "m", "m"],
+                    start_time=[st, st + pd.Timedelta(minutes=5), st, st])
+    assert ns["on_both_apps"](df2).tolist() == [True, True, False, False]
+    mixed = df.assign(start_time=["2026-12-01T12:00:00Z", "2026-12-01T07:00:00-05:00", "2026-12-01T12:00:00Z",
+                                  "2026-12-01T12:00:00Z"], player=["A", "a", "b", "A"])
+    assert ns["on_both_apps"](mixed).tolist() == [True, True, False, False]
     assert '"★ underdog"' in BOARD and "help=UD_BETTER_HELP" in BOARD
