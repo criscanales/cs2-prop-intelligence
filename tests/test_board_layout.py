@@ -55,3 +55,24 @@ def test_dashboard_bankroll_defaults_separately_from_cli():
     cfg = yaml.safe_load((Path(__file__).parents[1] / "config" / "settings.yaml").read_text())
     assert cfg["bankroll"] == 1000 and cfg["dashboard_bankroll"] == 100
     assert 'float(settings.get("dashboard_bankroll", settings["bankroll"]))' in SRC
+
+
+def test_on_both_apps_marks_only_props_offered_on_both_platforms():
+    import pandas as pd
+    src = SRC[SRC.index("def on_both_apps"):SRC.index("def t3_experimental")]
+    ns = {"pd": pd}
+    exec(src, ns)
+    st = pd.Timestamp("2026-12-01T12:00:00Z")
+    df = pd.DataFrame({"source": ["prizepicks", "underdog", "underdog", "prizepicks"], "player": ["a", "a", "b", "a"],
+                       "stat": ["kills", "kills", "kills", "headshots"], "maps": [(1, 2), (1, 2), (1, 2), (1, 2)],
+                       "start_time": [st, st, st, st]})
+    assert ns["on_both_apps"](df).tolist() == [True, True, False, False]
+    assert ns["on_both_apps"](df.iloc[:0]).tolist() == []
+    # priced slates: resolved player id + match key win over feed spellings and start-time formats
+    df2 = df.assign(player=["Aa", "aa ", "b", "Aa"], player_id=[1, 1, 2, 1], match=["m", "m", "m", "m"],
+                    start_time=[st, st + pd.Timedelta(minutes=5), st, st])
+    assert ns["on_both_apps"](df2).tolist() == [True, True, False, False]
+    mixed = df.assign(start_time=["2026-12-01T12:00:00Z", "2026-12-01T07:00:00-05:00", "2026-12-01T12:00:00Z",
+                                  "2026-12-01T12:00:00Z"], player=["A", "a", "b", "A"])
+    assert ns["on_both_apps"](mixed).tolist() == [True, True, False, False]
+    assert '"★ underdog"' in BOARD and "help=UD_BETTER_HELP" in BOARD
