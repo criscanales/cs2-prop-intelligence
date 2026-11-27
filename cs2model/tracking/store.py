@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS preds (
   source TEXT, player TEXT, team TEXT, opponent TEXT, stat TEXT, maps TEXT, start_time TEXT, ts TEXT,
   line REAL, model_mean REAL, p_over REAL, actual REAL,
   PRIMARY KEY(source, player, stat, maps, start_time));
+CREATE TABLE IF NOT EXISTS shadow_preds (
+  source TEXT, player TEXT, stat TEXT, maps TEXT, start_time TEXT, ts TEXT, line REAL, p_over_prod REAL, p_over REAL,
+  edge_over REAL, edge_under REAL, version TEXT, match_id INTEGER, prematch TEXT,
+  PRIMARY KEY(source, player, stat, maps, start_time));
 CREATE TABLE IF NOT EXISTS slips (
   id INTEGER PRIMARY KEY, created TEXT, platform TEXT, play TEXT, legs TEXT, p_all REAL,
   ev REAL, stake REAL, hit_dist TEXT, hits INTEGER, payout REAL, profit REAL);
@@ -151,6 +155,10 @@ def snapshot_lines(lines, con=None):
     con.commit()
 
 
+def _num(x):
+    return float("nan") if x is None or x != x else float(x)
+
+
 def log_preds(slate, con=None, status=_FETCH):
     """Keep the latest pre-start model price of every standard line (graded later for the bias check). Lines whose match
     bo3.gg does not verify as still upcoming (no map begun) are quarantined instead."""
@@ -160,7 +168,7 @@ def log_preds(slate, con=None, status=_FETCH):
     status = _status(status)
     now = pd.Timestamp.now(tz="UTC")
     s = slate[slate.odds_type.eq("standard") & slate.start_time.notna()]
-    rows = []
+    rows, shadow_rows = [], []
     for r in s.itertuples():
         st = pd.Timestamp(r.start_time)
         st = st.tz_localize("UTC") if st.tzinfo is None else st
@@ -172,11 +180,37 @@ def log_preds(slate, con=None, status=_FETCH):
             g = _gate(con, "preds", getattr(r, "team_id", None), getattr(r, "opp_id", None), status, row, st)
             if g is not None:
                 rows.append(row + g)
+                shadow_rows.append(tuple(_num(getattr(r, c, None)) for c in ("be_over", "be_under", "p_push")))
     q = ("INTO preds (source, player, team, opponent, stat, maps, start_time, ts, line, model_mean, p_over, t3, p_over_raw, "
          "match_id, prematch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     con.executemany("INSERT OR REPLACE " + q, [x for x in rows if x[-1] == "scheduled"])
     con.executemany("INSERT OR IGNORE " + q, [x for x in rows if x[-1] != "scheduled"])  # never overwrite a confident price
+    _log_shadow(con, rows, shadow_rows)
     con.commit()
+
+
+def _log_shadow(con, rows, extra):
+    """Shadow recalibrated P(over) for the same gated pre-match rows as preds (tier 1/2 only); never used for picks."""
+    from . import shadow
+    sh = shadow.load()
+    if sh is None:
+        return
+    version, cal = sh
+    out = []
+    for x, (be_o, be_u, p_push) in zip(rows, extra):
+        if x[11]:
+            continue
+        p = shadow.p_over(cal, x[4], x[5], x[10])
+        if p is None:
+            continue
+        live = max(1e-9, 1 - p_push) if p_push == p_push else 1.0
+        e_o = min(1.0, p / live) - be_o if be_o == be_o else None
+        e_u = min(1.0, max(0.0, 1 - p - (p_push if p_push == p_push else 0)) / live) - be_u if be_u == be_u else None
+        out.append((x[0], x[1], x[4], x[5], x[6], x[7], x[8], x[10], p, e_o, e_u, version, x[-2], x[-1]))
+    q = ("INTO shadow_preds (source, player, stat, maps, start_time, ts, line, p_over_prod, p_over, edge_over, edge_under, "
+         "version, match_id, prematch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    con.executemany("INSERT OR REPLACE " + q, [x for x in out if x[-1] == "scheduled"])
+    con.executemany("INSERT OR IGNORE " + q, [x for x in out if x[-1] != "scheduled"])
 
 
 def _inputs_hash(r):
